@@ -11,7 +11,7 @@ from pydantic import BaseModel
 load_dotenv()
 
 import database
-import ezviz_client
+import rtsp_client
 import scheduler
 import alert_manager
 
@@ -30,11 +30,9 @@ async def lifespan(app: FastAPI):
 
 def _seed_env_settings():
     for key, env in [
-        ("ezviz_app_key", "EZVIZ_APP_KEY"),
-        ("ezviz_app_secret", "EZVIZ_APP_SECRET"),
-        ("email_from", "EMAIL_FROM"),
+        ("email_from",     "EMAIL_FROM"),
         ("email_password", "EMAIL_PASSWORD"),
-        ("email_to", "EMAIL_TO"),
+        ("email_to",       "EMAIL_TO"),
     ]:
         val = os.environ.get(env, "")
         if val:
@@ -51,7 +49,7 @@ app.add_middleware(
 )
 
 
-# ── Health ───────────────────────────────────────────────────────────────────
+# ── Health ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
 async def root():
@@ -63,63 +61,63 @@ async def health():
     return {"status": "ok"}
 
 
-# ── Cameras ──────────────────────────────────────────────────────────────────
+# ── Cameras ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/cameras")
 async def get_cameras():
-    """Return cameras from DB (auto-synced from Ezviz on first call)."""
-    cams = database.get_cameras()
-    if not cams:
-        try:
-            devices = await ezviz_client.list_all_devices()
-            if devices:
-                database.save_cameras(devices)
-                cams = database.get_cameras()
-        except Exception as e:
-            return JSONResponse({"cameras": [], "error": str(e)}, status_code=200)
-    return {"cameras": cams}
+    return {"cameras": database.get_cameras()}
 
 
-@app.post("/api/cameras/sync")
-async def sync_cameras():
-    """Force sync cameras from Ezviz account."""
-    try:
-        devices = await ezviz_client.list_all_devices()
-        database.save_cameras(devices)
-        return {"synced": len(devices)}
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
+class CameraCreate(BaseModel):
+    serial: str
+    name: str
+    location: str = ""
+    rtsp_url: str
+    monitor_type: str = "theft"
+
+
+@app.post("/api/cameras")
+async def add_camera(body: CameraCreate):
+    database.add_camera(body.serial, body.name, body.location, body.rtsp_url, body.monitor_type)
+    return {"ok": True}
 
 
 class CameraUpdate(BaseModel):
     name: str | None = None
     location: str | None = None
+    rtsp_url: str | None = None
+    monitor_type: str | None = None
     enabled: int | None = None
     zones: str | None = None
 
 
 @app.patch("/api/cameras/{serial}")
 async def update_camera(serial: str, body: CameraUpdate):
-    database.update_camera(serial, body.name, body.location, body.enabled, body.zones)
+    database.update_camera(serial, **{k: v for k, v in body.model_dump().items() if v is not None})
     return {"ok": True}
 
 
-@app.get("/api/cameras/{serial}/stream")
-async def get_stream(serial: str, channel: int = 1):
-    try:
-        url = await ezviz_client.get_live_stream(serial, channel, protocol=2)
-        return {"url": url}
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
+@app.delete("/api/cameras/{serial}")
+async def delete_camera(serial: str):
+    database.delete_camera(serial)
+    return {"ok": True}
+
+
+@app.post("/api/cameras/{serial}/test")
+async def test_camera(serial: str):
+    cam = database.get_camera(serial)
+    if not cam:
+        return JSONResponse({"error": "Camera not found"}, status_code=404)
+    ok = await rtsp_client.test_rtsp(cam["rtsp_url"])
+    return {"ok": ok}
 
 
 @app.get("/api/cameras/{serial}/snapshot")
-async def get_snapshot(serial: str, channel: int = 1):
-    try:
-        url = await ezviz_client.capture_snapshot(serial, channel)
-        return {"url": url}
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
+async def get_snapshot(serial: str):
+    cam = database.get_camera(serial)
+    if not cam:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    return {"b64": cam.get("last_snapshot", "")}
 
 
 # ── Alerts ────────────────────────────────────────────────────────────────────
@@ -130,21 +128,16 @@ async def get_alerts(
     page_size: int = Query(20, ge=1, le=100),
     camera_serial: str | None = None,
     alert_type: str | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
+    monitor_type: str | None = None,
 ):
-    return database.get_alerts(page, page_size, camera_serial, alert_type, date_from, date_to)
+    return database.get_alerts(page, page_size, camera_serial, alert_type, monitor_type)
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 @app.get("/api/stats")
 async def get_stats():
-    stats = database.get_stats()
-    cams = database.get_cameras()
-    stats["total_cameras"] = len(cams)
-    stats["active_cameras"] = sum(1 for c in cams if c.get("enabled", 1))
-    return stats
+    return database.get_stats()
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
@@ -157,17 +150,15 @@ async def get_settings():
 
 
 class SettingsBody(BaseModel):
-    ezviz_app_key: str | None = None
-    ezviz_app_secret: str | None = None
-    scan_interval: str | None = None
-    crowd_threshold: str | None = None
-    shop_open: str | None = None
-    shop_close: str | None = None
-    email_to: str | None = None
-    email_from: str | None = None
-    email_password: str | None = None
-    fcm_enabled: str | None = None
-    alert_cooldown: str | None = None
+    scan_interval:    str | None = None
+    crowd_threshold:  str | None = None
+    idle_threshold:   str | None = None
+    shop_open:        str | None = None
+    shop_close:       str | None = None
+    email_to:         str | None = None
+    email_from:       str | None = None
+    email_password:   str | None = None
+    alert_cooldown:   str | None = None
 
 
 @app.post("/api/settings")
@@ -181,12 +172,6 @@ async def save_settings(body: SettingsBody):
         except Exception:
             pass
     return {"ok": True}
-
-
-@app.post("/api/settings/test-connection")
-async def test_connection():
-    ok = await ezviz_client.test_connection()
-    return {"connected": ok}
 
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────

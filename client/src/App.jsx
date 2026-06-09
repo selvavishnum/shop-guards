@@ -1,24 +1,18 @@
 import { Routes, Route, NavLink, useLocation } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
-import { LayoutGrid, Bell, BarChart2, Settings, Shield } from "lucide-react";
+import { LayoutGrid, Bell, BarChart2, Settings, Shield, Video } from "lucide-react";
 import Dashboard from "./pages/Dashboard";
 import Alerts from "./pages/Alerts";
 import Analytics from "./pages/Analytics";
 import SettingsPage from "./pages/Settings";
+import CamerasPage from "./pages/Cameras";
 import { openAlertWS } from "./services/api";
-
-const TYPE_LABELS = {
-  zone_intrusion: "Zone Intrusion",
-  crowd: "Crowd Alert",
-  after_hours: "After-Hours",
-  motion: "Motion",
-};
+import { ALERT_LABELS } from "./components/AlertCard";
 
 export default function App() {
   const [toasts, setToasts] = useState([]);
   const [wsOk, setWsOk] = useState(false);
   const wsRef = useRef(null);
-  const location = useLocation();
 
   useEffect(() => {
     function connect() {
@@ -38,7 +32,6 @@ export default function App() {
 
   return (
     <div className="layout">
-      {/* Top bar */}
       <header className="topbar">
         <div className="topbar-logo">
           <Shield size={20} color="var(--accent)" />
@@ -50,7 +43,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Sidebar */}
       <nav className="sidebar">
         <div className="nav-section">Monitor</div>
         <NavLink to="/" end className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
@@ -66,30 +58,32 @@ export default function App() {
         </NavLink>
 
         <div className="nav-section">System</div>
+        <NavLink to="/cameras" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+          <Video size={16} /> Cameras
+        </NavLink>
         <NavLink to="/settings" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
           <Settings size={16} /> Settings
         </NavLink>
       </nav>
 
-      {/* Main content */}
       <main className="main">
         <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/alerts" element={<Alerts />} />
+          <Route path="/"         element={<Dashboard />} />
+          <Route path="/alerts"   element={<Alerts />} />
           <Route path="/analytics" element={<Analytics />} />
+          <Route path="/cameras"  element={<CamerasPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>
 
-      {/* Alert toasts */}
       <div className="toast-container">
         {toasts.map(({ id, event }) => (
           <div key={id} className="toast">
             <div className="toast-title">
-              {TYPE_LABELS[event.alert_type] || event.alert_type} — {event.camera_name}
+              {ALERT_LABELS[event.alert_type] || event.alert_type} — {event.camera_name}
             </div>
             <div className="toast-body">
-              {event.person_count} person{event.person_count !== 1 ? "s" : ""} detected · {event.time?.slice(11, 16)}
+              {event.person_count} person{event.person_count !== 1 ? "s" : ""} · {event.time?.slice(11, 16)}
             </div>
           </div>
         ))}

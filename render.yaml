@@ -1,17 +1,13 @@
 services:
-  # ── Backend API (Python FastAPI) ─────────────────────────────────────────────
+  # ── Backend API (Python FastAPI + YOLOv8 + OpenCV RTSP) ──────────────────────
   - type: web
     name: shopguard-api
     runtime: python
     rootDir: server
-    buildCommand: pip install -r requirements.txt
+    buildCommand: apt-get install -y ffmpeg libglib2.0-0 libsm6 libxext6 && pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
-      - key: EZVIZ_APP_KEY
-        sync: false
-      - key: EZVIZ_APP_SECRET
-        sync: false
       - key: EMAIL_FROM
         sync: false
       - key: EMAIL_PASSWORD
@@ -20,10 +16,6 @@ services:
         sync: false
       - key: DB_PATH
         value: shopguard.db
-      - key: DEMO_MODE
-        value: false
-      - key: EZVIZ_BASE_URL
-        value: https://iopen.ezviz.com
 
   # ── Frontend (React PWA Static Site) ─────────────────────────────────────────
   - type: web
@@ -35,4 +27,3 @@ services:
     envVars:
       - key: VITE_API_URL
         sync: false       # Set to: https://shopguard-api.onrender.com
-

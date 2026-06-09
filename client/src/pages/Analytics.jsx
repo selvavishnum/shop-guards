@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar,
-  XAxis, YAxis, Tooltip, CartesianGrid, Legend,
+  XAxis, YAxis, Tooltip, CartesianGrid,
 } from "recharts";
 import { api } from "../services/api";
 
@@ -10,6 +10,14 @@ const CHART_STYLE = {
   border: "1px solid #475569",
   borderRadius: 8,
   fontSize: 12,
+};
+
+const MONITOR_COLORS = {
+  theft:             "#ef4444",
+  customer_count:    "#22c55e",
+  cash_drawer:       "#3b82f6",
+  staff_misbehavior: "#f97316",
+  staff_idle:        "#94a3b8",
 };
 
 export default function Analytics() {
@@ -29,6 +37,12 @@ export default function Analytics() {
     return { hour: `${hh}:00`, alerts: found?.cnt || 0 };
   });
 
+  const byMonitorData = (stats.by_monitor || []).map(r => ({
+    name: r.monitor_type,
+    count: r.cnt,
+    fill: MONITOR_COLORS[r.monitor_type] || "#94a3b8",
+  }));
+
   return (
     <>
       <div className="page-header">
@@ -42,19 +56,15 @@ export default function Analytics() {
         </div>
         <div className="stat-card">
           <div className="stat-label">Alerts Today</div>
-          <div className="stat-value red">{stats.today_count ?? 0}</div>
+          <div className="stat-value red">{stats.today_alerts ?? 0}</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Zone Intrusions</div>
-          <div className="stat-value yellow">
-            {stats.by_type?.find(t => t.alert_type === "zone_intrusion")?.cnt ?? 0}
-          </div>
+          <div className="stat-label">Customers Today</div>
+          <div className="stat-value green">{stats.customer_count_today ?? 0}</div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Crowd Alerts</div>
-          <div className="stat-value orange">
-            {stats.by_type?.find(t => t.alert_type === "crowd")?.cnt ?? 0}
-          </div>
+          <div className="stat-label">Drawer Opens</div>
+          <div className="stat-value" style={{ color: "var(--orange)" }}>{stats.drawer_opens_today ?? 0}</div>
         </div>
       </div>
 
@@ -75,15 +85,18 @@ export default function Analytics() {
         </div>
 
         <div className="card">
-          <div style={{ fontWeight: 600, marginBottom: 14 }}>Alerts by Type (Today)</div>
+          <div style={{ fontWeight: 600, marginBottom: 14 }}>Alerts by Monitor Mode</div>
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stats.by_type || []}>
+              <BarChart data={byMonitorData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis dataKey="alert_type" tick={{ fill: "#94a3b8", fontSize: 11 }} />
+                <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
                 <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
                 <Tooltip contentStyle={CHART_STYLE} />
-                <Bar dataKey="cnt" fill="#ef4444" radius={[4, 4, 0, 0]} name="Alerts" />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Alerts"
+                  fill="#3b82f6"
+                  label={false}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -106,8 +119,6 @@ export default function Analytics() {
           </div>
         </div>
       )}
-
-      <style>{`.orange { color: var(--orange); }`}</style>
     </>
   );
 }

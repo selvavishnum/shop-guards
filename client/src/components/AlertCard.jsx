@@ -1,17 +1,29 @@
 import { Clock, Camera, Users } from "lucide-react";
 
+export const ALERT_LABELS = {
+  intrusion:      "Zone Intrusion",
+  after_hours:    "After-Hours Alert",
+  crowd:          "Crowd Alert",
+  customer_entry: "Customer Entry",
+  drawer_open:    "Cash Drawer Opened",
+  misbehavior:    "Staff Misbehavior",
+  staff_idle:     "Staff Idle Alert",
+};
+
 const TYPE_META = {
-  zone_intrusion: { label: "Zone Intrusion", cls: "badge-red" },
-  crowd:          { label: "Crowd Alert",    cls: "badge-orange" },
-  after_hours:    { label: "After-Hours",    cls: "badge-yellow" },
-  motion:         { label: "Motion",         cls: "badge-blue" },
+  intrusion:      { cls: "badge-red" },
+  after_hours:    { cls: "badge-yellow" },
+  crowd:          { cls: "badge-orange" },
+  customer_entry: { cls: "badge-green" },
+  drawer_open:    { cls: "badge-blue" },
+  misbehavior:    { cls: "badge-red" },
+  staff_idle:     { cls: "badge-gray" },
 };
 
 export default function AlertCard({ alert }) {
-  const meta = TYPE_META[alert.alert_type] || { label: alert.alert_type, cls: "badge-gray" };
-  const thumb = alert.annotated_b64
-    ? `data:image/jpeg;base64,${alert.annotated_b64}`
-    : alert.snapshot_url || null;
+  const label = ALERT_LABELS[alert.alert_type] || alert.alert_type;
+  const meta  = TYPE_META[alert.alert_type]    || { cls: "badge-gray" };
+  const thumb = alert.annotated_b64 ? `data:image/jpeg;base64,${alert.annotated_b64}` : null;
 
   return (
     <div className={`alert-item ${alert.alert_type}`}>
@@ -22,7 +34,7 @@ export default function AlertCard({ alert }) {
       )}
       <div className="alert-meta">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-          <span className={`badge ${meta.cls}`}>{meta.label}</span>
+          <span className={`badge ${meta.cls}`}>{label}</span>
           {alert.person_count > 0 && (
             <span className="badge badge-gray">
               <Users size={10} /> {alert.person_count}
