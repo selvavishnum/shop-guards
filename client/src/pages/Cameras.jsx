@@ -150,8 +150,8 @@ export default function CamerasPage() {
                 placeholder="rtsp://admin:PASSWORD@PUBLIC_IP:554/Streaming/Channels/101"
               />
               <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-                Hikvision: rtsp://admin:PASS@IP:554/Streaming/Channels/101 &nbsp;|&nbsp;
-                Channel suffix: 101=cam1, 201=cam2, 301=cam3…
+                Format: <code style={{ background: "var(--bg)", padding: "1px 4px", borderRadius: 3 }}>rtsp://admin:PASS@IP_OR_DDNS:554/Streaming/Channels/&lt;id&gt;</code>
+                &nbsp;— Channel IDs: 101=cam1 main, 102=cam1 sub, 201=cam2 main, 202=cam2 sub, 301=cam3 main…
               </div>
             </div>
           </div>

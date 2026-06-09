@@ -120,7 +120,10 @@ export default function SettingsPage() {
               </code>
             </div>
             <div style={{ marginBottom: 8 }}>
-              Channel numbers: 101 = cam 1 main, 102 = cam 2 main, 201 = cam 1 sub-stream.
+              Channel IDs: <strong style={{ color: "var(--text)" }}>101</strong> = cam 1 mainstream &nbsp;
+              <strong style={{ color: "var(--text)" }}>102</strong> = cam 1 sub-stream &nbsp;
+              <strong style={{ color: "var(--text)" }}>201</strong> = cam 2 mainstream &nbsp;
+              <strong style={{ color: "var(--text)" }}>202</strong> = cam 2 sub-stream, and so on.
             </div>
             <div>
               Enable <strong style={{ color: "var(--text)" }}>WAN Access / Remote View</strong> in your DVR network settings.
