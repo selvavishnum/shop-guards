@@ -1,145 +1,140 @@
 import time
 import smtplib
 import base64
+import threading
+import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
-from database import get_setting, save_alert as db_save_alert
 
-# cooldown tracker: {camera_serial + alert_type -> last_alert_epoch}
+from database import get_setting, save_alert, inc_daily, inc_empty_scans, reset_empty_scans, get_camera
+
 _cooldowns: dict[str, float] = {}
-
-# broadcast queue for WebSocket listeners
 _ws_listeners: list = []
 
+ALERT_LABELS = {
+    "intrusion":      "Zone Intrusion",
+    "after_hours":    "After-Hours Alert",
+    "crowd":          "Crowd Alert",
+    "customer_entry": "Customer Entry",
+    "drawer_open":    "Cash Drawer Opened",
+    "misbehavior":    "Staff Misbehavior",
+    "staff_idle":     "Staff Idle Alert",
+}
 
-def register_ws(queue):
-    _ws_listeners.append(queue)
 
-
-def unregister_ws(queue):
-    _ws_listeners.discard(queue) if hasattr(_ws_listeners, "discard") else None
-    try:
-        _ws_listeners.remove(queue)
-    except ValueError:
-        pass
+def register_ws(q):    _ws_listeners.append(q)
+def unregister_ws(q):
+    try: _ws_listeners.remove(q)
+    except ValueError: pass
 
 
 async def broadcast(event: dict):
     for q in list(_ws_listeners):
-        try:
-            await q.put(event)
-        except Exception:
-            pass
+        try: await q.put(event)
+        except Exception: pass
 
 
-def _is_cooled_down(camera_serial: str, alert_type: str, cooldown_s: int) -> bool:
-    key = f"{camera_serial}:{alert_type}"
-    last = _cooldowns.get(key, 0)
-    return time.time() - last < cooldown_s
+def _cooled(key: str, secs: int) -> bool:
+    return time.time() - _cooldowns.get(key, 0) < secs
 
 
-def _mark_cooldown(camera_serial: str, alert_type: str):
-    _cooldowns[f"{camera_serial}:{alert_type}"] = time.time()
+def _mark(key: str):
+    _cooldowns[key] = time.time()
 
 
-async def process_detection(
-    camera_serial: str,
-    camera_name: str,
-    detection: dict,
-    zones: list,
-    shop_open: str,
-    shop_close: str,
-    crowd_threshold: int,
-    cooldown_s: int,
-):
-    person_count = detection.get("person_count", 0)
-    persons = detection.get("persons", [])
-    snapshot_url = detection.get("snapshot_url", "")
-    annotated_b64 = detection.get("annotated_b64", "")
+async def process(serial: str, name: str, detection: dict, cam: dict):
+    monitor = cam.get("monitor_type", "theft")
+    import json
+    zones      = json.loads(cam.get("zones", "[]"))
+    settings   = {k: get_setting(k) for k in
+                  ["shop_open","shop_close","alert_cooldown","crowd_threshold","idle_threshold"]}
+    shop_open  = settings["shop_open"]  or "08:00"
+    shop_close = settings["shop_close"] or "22:00"
+    cooldown   = int(settings["alert_cooldown"]  or 180)
+    crowd_th   = int(settings["crowd_threshold"] or 5)
+    idle_th    = int(settings["idle_threshold"]  or 5)
 
-    import datetime
-    now_t = datetime.datetime.now().strftime("%H:%M")
+    count      = detection["person_count"]
+    in_zone    = detection["in_zone_count"]
+    motion     = detection["motion_score"]
+    b64        = detection["annotated_b64"]
+    conf       = max((p["confidence"] for p in detection["persons"]), default=0.0)
+
+    now_t    = datetime.datetime.now().strftime("%H:%M")
     in_hours = shop_open <= now_t <= shop_close
 
     triggered = []
 
-    # Zone intrusion alert
-    if zones and any(p.get("in_zone") for p in persons):
-        if not _is_cooled_down(camera_serial, "zone_intrusion", cooldown_s):
-            triggered.append(("zone_intrusion", person_count))
-            _mark_cooldown(camera_serial, "zone_intrusion")
+    if monitor == "theft":
+        if in_zone > 0 and not _cooled(f"{serial}:intrusion", cooldown):
+            triggered.append("intrusion"); _mark(f"{serial}:intrusion")
+        if count > 0 and not in_hours and not _cooled(f"{serial}:after_hours", cooldown):
+            triggered.append("after_hours"); _mark(f"{serial}:after_hours")
+        if count >= crowd_th and not _cooled(f"{serial}:crowd", cooldown * 2):
+            triggered.append("crowd"); _mark(f"{serial}:crowd")
 
-    # Crowd alert
-    if person_count >= crowd_threshold:
-        if not _is_cooled_down(camera_serial, "crowd", cooldown_s * 2):
-            triggered.append(("crowd", person_count))
-            _mark_cooldown(camera_serial, "crowd")
+    elif monitor == "customer_count":
+        if count > 0 and not _cooled(f"{serial}:customer_entry", 30):
+            inc_daily(serial, "customer"); _mark(f"{serial}:customer_entry")
+            triggered.append("customer_entry")
 
-    # After-hours person detected
-    if person_count > 0 and not in_hours:
-        if not _is_cooled_down(camera_serial, "after_hours", cooldown_s):
-            triggered.append(("after_hours", person_count))
-            _mark_cooldown(camera_serial, "after_hours")
+    elif monitor == "cash_drawer":
+        if in_zone > 0 and motion > 0.06 and not _cooled(f"{serial}:drawer_open", 30):
+            inc_daily(serial, "drawer"); _mark(f"{serial}:drawer_open")
+            triggered.append("drawer_open")
+        if in_zone > 0 and not in_hours and not _cooled(f"{serial}:after_hours", cooldown):
+            triggered.append("after_hours"); _mark(f"{serial}:after_hours")
 
-    for alert_type, count in triggered:
-        conf = max((p["confidence"] for p in persons), default=0.0)
-        db_save_alert(camera_serial, camera_name, alert_type, count, conf, snapshot_url, annotated_b64)
+    elif monitor == "staff_misbehavior":
+        if count >= 2 and motion > 0.10 and not _cooled(f"{serial}:misbehavior", cooldown):
+            triggered.append("misbehavior"); _mark(f"{serial}:misbehavior")
+
+    elif monitor == "staff_idle":
+        if count == 0 and in_hours:
+            inc_empty_scans(serial)
+            cam_row = get_camera(serial)
+            if cam_row and cam_row["empty_scans"] >= idle_th:
+                if not _cooled(f"{serial}:staff_idle", cooldown * 2):
+                    triggered.append("staff_idle"); _mark(f"{serial}:staff_idle")
+        else:
+            reset_empty_scans(serial)
+
+    for alert_type in triggered:
+        save_alert(serial, name, alert_type, monitor, count, conf, b64)
         event = {
-            "camera_serial": camera_serial,
-            "camera_name": camera_name,
-            "alert_type": alert_type,
-            "person_count": count,
-            "snapshot_url": snapshot_url,
-            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "camera_serial": serial, "camera_name": name,
+            "alert_type": alert_type, "monitor_type": monitor,
+            "person_count": count, "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         await broadcast(event)
-        _send_email_async(event, annotated_b64)
+        threading.Thread(target=_send_email, args=(event, b64), daemon=True).start()
 
 
-def _send_email_async(event: dict, annotated_b64: str):
-    import threading
-    threading.Thread(target=_send_email, args=(event, annotated_b64), daemon=True).start()
-
-
-def _send_email(event: dict, annotated_b64: str):
-    email_from = get_setting("email_from")
-    email_pw = get_setting("email_password")
-    email_to = get_setting("email_to")
-    if not all([email_from, email_pw, email_to]):
+def _send_email(event: dict, b64: str):
+    efrom = get_setting("email_from")
+    epw   = get_setting("email_password")
+    eto   = get_setting("email_to")
+    if not all([efrom, epw, eto]):
         return
-
-    type_labels = {
-        "zone_intrusion": "Zone Intrusion Alert",
-        "crowd": "Crowd Alert",
-        "after_hours": "After-Hours Alert",
-        "motion": "Motion Detected",
-    }
-    subject = f"[ShopGuard] {type_labels.get(event['alert_type'], event['alert_type'])} — {event['camera_name']}"
-    body = (
-        f"Alert Type: {type_labels.get(event['alert_type'], event['alert_type'])}\n"
-        f"Camera: {event['camera_name']}\n"
-        f"Persons Detected: {event['person_count']}\n"
-        f"Time: {event['time']}\n"
+    label   = ALERT_LABELS.get(event["alert_type"], event["alert_type"])
+    subject = f"[ShopGuard] {label} — {event['camera_name']}"
+    body    = (
+        f"Alert:   {label}\n"
+        f"Camera:  {event['camera_name']}\n"
+        f"Mode:    {event['monitor_type']}\n"
+        f"Persons: {event['person_count']}\n"
+        f"Time:    {event['time']}\n"
     )
-
     msg = MIMEMultipart()
-    msg["From"] = email_from
-    msg["To"] = email_to
-    msg["Subject"] = subject
+    msg["From"], msg["To"], msg["Subject"] = efrom, eto, subject
     msg.attach(MIMEText(body))
-
-    if annotated_b64:
-        try:
-            img_data = base64.b64decode(annotated_b64)
-            img = MIMEImage(img_data, name="snapshot.jpg")
-            msg.attach(img)
-        except Exception:
-            pass
-
+    if b64:
+        try: msg.attach(MIMEImage(base64.b64decode(b64), name="snapshot.jpg"))
+        except Exception: pass
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as smtp:
-            smtp.login(email_from, email_pw)
-            smtp.sendmail(email_from, email_to, msg.as_string())
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as s:
+            s.login(efrom, epw)
+            s.sendmail(efrom, eto, msg.as_string())
     except Exception:
         pass

@@ -258,10 +258,13 @@ input, select, textarea { font: inherit; }
   gap: 14px;
   align-items: flex-start;
 }
-.alert-item.zone_intrusion { border-left: 3px solid var(--red); }
-.alert-item.crowd          { border-left: 3px solid var(--orange); }
-.alert-item.after_hours    { border-left: 3px solid var(--yellow); }
-.alert-item.motion         { border-left: 3px solid var(--accent); }
+.alert-item.intrusion       { border-left: 3px solid var(--red); }
+.alert-item.after_hours     { border-left: 3px solid var(--yellow); }
+.alert-item.crowd           { border-left: 3px solid var(--orange); }
+.alert-item.customer_entry  { border-left: 3px solid var(--green); }
+.alert-item.drawer_open     { border-left: 3px solid var(--accent); }
+.alert-item.misbehavior     { border-left: 3px solid var(--red); }
+.alert-item.staff_idle      { border-left: 3px solid var(--border); }
 .alert-thumb {
   width: 80px; height: 56px;
   border-radius: 6px;

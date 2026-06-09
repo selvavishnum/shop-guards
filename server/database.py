@@ -1,6 +1,6 @@
 import sqlite3
 import os
-from pathlib import Path
+from datetime import date
 
 DB_PATH = os.environ.get("DB_PATH", "shopguard.db")
 
@@ -13,16 +13,18 @@ def get_conn():
 
 def init_db():
     conn = get_conn()
-    c = conn.cursor()
-    c.executescript("""
+    conn.executescript("""
         CREATE TABLE IF NOT EXISTS cameras (
-            serial      TEXT PRIMARY KEY,
-            channel     INTEGER NOT NULL DEFAULT 1,
-            name        TEXT NOT NULL,
-            location    TEXT DEFAULT '',
-            enabled     INTEGER NOT NULL DEFAULT 1,
-            zones       TEXT DEFAULT '[]',
-            created_at  TEXT DEFAULT (datetime('now'))
+            serial          TEXT PRIMARY KEY,
+            name            TEXT NOT NULL,
+            location        TEXT DEFAULT '',
+            rtsp_url        TEXT NOT NULL DEFAULT '',
+            monitor_type    TEXT NOT NULL DEFAULT 'theft',
+            enabled         INTEGER NOT NULL DEFAULT 1,
+            zones           TEXT DEFAULT '[]',
+            last_snapshot   TEXT DEFAULT '',
+            empty_scans     INTEGER DEFAULT 0,
+            created_at      TEXT DEFAULT (datetime('now'))
         );
 
         CREATE TABLE IF NOT EXISTS alerts (
@@ -30,124 +32,71 @@ def init_db():
             camera_serial   TEXT NOT NULL,
             camera_name     TEXT NOT NULL,
             alert_type      TEXT NOT NULL,
+            monitor_type    TEXT NOT NULL DEFAULT 'theft',
             person_count    INTEGER DEFAULT 0,
             confidence      REAL DEFAULT 0.0,
-            snapshot_url    TEXT DEFAULT '',
             annotated_b64   TEXT DEFAULT '',
             created_at      TEXT DEFAULT (datetime('now'))
         );
 
-        CREATE INDEX IF NOT EXISTS idx_alerts_time ON alerts(created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_alerts_camera ON alerts(camera_serial);
+        CREATE TABLE IF NOT EXISTS daily_counts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            camera_serial   TEXT NOT NULL,
+            date            TEXT NOT NULL,
+            customer_count  INTEGER DEFAULT 0,
+            drawer_count    INTEGER DEFAULT 0,
+            UNIQUE(camera_serial, date)
+        );
 
         CREATE TABLE IF NOT EXISTS settings (
             key     TEXT PRIMARY KEY,
             value   TEXT NOT NULL
         );
 
-        INSERT OR IGNORE INTO settings VALUES ('ezviz_app_key', '');
-        INSERT OR IGNORE INTO settings VALUES ('ezviz_app_secret', '');
-        INSERT OR IGNORE INTO settings VALUES ('scan_interval', '60');
+        CREATE INDEX IF NOT EXISTS idx_alerts_time   ON alerts(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_alerts_camera ON alerts(camera_serial);
+
+        INSERT OR IGNORE INTO settings VALUES ('scan_interval',   '60');
         INSERT OR IGNORE INTO settings VALUES ('crowd_threshold', '5');
-        INSERT OR IGNORE INTO settings VALUES ('shop_open', '08:00');
-        INSERT OR IGNORE INTO settings VALUES ('shop_close', '22:00');
-        INSERT OR IGNORE INTO settings VALUES ('email_to', '');
-        INSERT OR IGNORE INTO settings VALUES ('email_from', '');
-        INSERT OR IGNORE INTO settings VALUES ('email_password', '');
-        INSERT OR IGNORE INTO settings VALUES ('fcm_enabled', 'false');
-        INSERT OR IGNORE INTO settings VALUES ('alert_cooldown', '180');
+        INSERT OR IGNORE INTO settings VALUES ('shop_open',       '08:00');
+        INSERT OR IGNORE INTO settings VALUES ('shop_close',      '22:00');
+        INSERT OR IGNORE INTO settings VALUES ('email_to',        '');
+        INSERT OR IGNORE INTO settings VALUES ('email_from',      '');
+        INSERT OR IGNORE INTO settings VALUES ('email_password',  '');
+        INSERT OR IGNORE INTO settings VALUES ('alert_cooldown',  '180');
+        INSERT OR IGNORE INTO settings VALUES ('idle_threshold',  '5');
     """)
     conn.commit()
     conn.close()
 
 
-def get_setting(key: str, default: str = "") -> str:
+def get_setting(key, default=""):
     conn = get_conn()
     row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
     conn.close()
     return row["value"] if row else default
 
 
-def set_setting(key: str, value: str):
+def set_setting(key, value):
     conn = get_conn()
     conn.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (key, value))
     conn.commit()
     conn.close()
 
 
-def get_all_settings() -> dict:
+def get_all_settings():
     conn = get_conn()
     rows = conn.execute("SELECT key, value FROM settings").fetchall()
     conn.close()
     return {r["key"]: r["value"] for r in rows}
 
 
-def save_alert(camera_serial, camera_name, alert_type, person_count, confidence, snapshot_url, annotated_b64=""):
+def add_camera(serial, name, location, rtsp_url, monitor_type):
     conn = get_conn()
     conn.execute(
-        "INSERT INTO alerts (camera_serial,camera_name,alert_type,person_count,confidence,snapshot_url,annotated_b64) VALUES (?,?,?,?,?,?,?)",
-        (camera_serial, camera_name, alert_type, person_count, confidence, snapshot_url, annotated_b64)
+        "INSERT OR REPLACE INTO cameras (serial,name,location,rtsp_url,monitor_type) VALUES (?,?,?,?,?)",
+        (serial, name, location, rtsp_url, monitor_type),
     )
-    conn.commit()
-    conn.close()
-
-
-def get_alerts(page=0, page_size=20, camera_serial=None, alert_type=None, date_from=None, date_to=None):
-    conn = get_conn()
-    where = ["1=1"]
-    params = []
-    if camera_serial:
-        where.append("camera_serial=?")
-        params.append(camera_serial)
-    if alert_type:
-        where.append("alert_type=?")
-        params.append(alert_type)
-    if date_from:
-        where.append("created_at >= ?")
-        params.append(date_from)
-    if date_to:
-        where.append("created_at <= ?")
-        params.append(date_to)
-    where_str = " AND ".join(where)
-    total = conn.execute(f"SELECT COUNT(*) FROM alerts WHERE {where_str}", params).fetchone()[0]
-    rows = conn.execute(
-        f"SELECT id,camera_serial,camera_name,alert_type,person_count,confidence,snapshot_url,created_at FROM alerts WHERE {where_str} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        params + [page_size, page * page_size]
-    ).fetchall()
-    conn.close()
-    return {"total": total, "alerts": [dict(r) for r in rows]}
-
-
-def get_stats():
-    conn = get_conn()
-    today_count = conn.execute(
-        "SELECT COUNT(*) FROM alerts WHERE date(created_at)=date('now')"
-    ).fetchone()[0]
-    by_type = conn.execute(
-        "SELECT alert_type, COUNT(*) as cnt FROM alerts WHERE date(created_at)=date('now') GROUP BY alert_type"
-    ).fetchall()
-    hourly = conn.execute(
-        "SELECT strftime('%H',created_at) as hour, COUNT(*) as cnt FROM alerts WHERE date(created_at)=date('now') GROUP BY hour ORDER BY hour"
-    ).fetchall()
-    top_cameras = conn.execute(
-        "SELECT camera_name, COUNT(*) as cnt FROM alerts WHERE date(created_at)=date('now') GROUP BY camera_serial ORDER BY cnt DESC LIMIT 10"
-    ).fetchall()
-    conn.close()
-    return {
-        "today_count": today_count,
-        "by_type": [dict(r) for r in by_type],
-        "hourly": [dict(r) for r in hourly],
-        "top_cameras": [dict(r) for r in top_cameras],
-    }
-
-
-def save_cameras(cameras: list):
-    conn = get_conn()
-    for cam in cameras:
-        conn.execute(
-            "INSERT OR IGNORE INTO cameras (serial, channel, name, location) VALUES (?,?,?,?)",
-            (cam["deviceSerial"], cam.get("channelNo", 1), cam.get("deviceName", cam["deviceSerial"]), "")
-        )
     conn.commit()
     conn.close()
 
@@ -159,15 +108,124 @@ def get_cameras():
     return [dict(r) for r in rows]
 
 
-def update_camera(serial: str, name: str = None, location: str = None, enabled: int = None, zones: str = None):
+def get_camera(serial):
     conn = get_conn()
-    if name is not None:
-        conn.execute("UPDATE cameras SET name=? WHERE serial=?", (name, serial))
-    if location is not None:
-        conn.execute("UPDATE cameras SET location=? WHERE serial=?", (location, serial))
-    if enabled is not None:
-        conn.execute("UPDATE cameras SET enabled=? WHERE serial=?", (enabled, serial))
-    if zones is not None:
-        conn.execute("UPDATE cameras SET zones=? WHERE serial=?", (zones, serial))
+    row = conn.execute("SELECT * FROM cameras WHERE serial=?", (serial,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_camera(serial, **kwargs):
+    conn = get_conn()
+    allowed = {"name", "location", "rtsp_url", "monitor_type", "enabled", "zones"}
+    for k, v in kwargs.items():
+        if k in allowed and v is not None:
+            conn.execute(f"UPDATE cameras SET {k}=? WHERE serial=?", (v, serial))
     conn.commit()
     conn.close()
+
+
+def delete_camera(serial):
+    conn = get_conn()
+    conn.execute("DELETE FROM cameras WHERE serial=?", (serial,))
+    conn.commit()
+    conn.close()
+
+
+def update_snapshot(serial, b64):
+    conn = get_conn()
+    conn.execute("UPDATE cameras SET last_snapshot=? WHERE serial=?", (b64, serial))
+    conn.commit()
+    conn.close()
+
+
+def inc_empty_scans(serial):
+    conn = get_conn()
+    conn.execute("UPDATE cameras SET empty_scans=empty_scans+1 WHERE serial=?", (serial,))
+    conn.commit()
+    conn.close()
+
+
+def reset_empty_scans(serial):
+    conn = get_conn()
+    conn.execute("UPDATE cameras SET empty_scans=0 WHERE serial=?", (serial,))
+    conn.commit()
+    conn.close()
+
+
+def inc_daily(serial, kind="customer"):
+    conn = get_conn()
+    today = date.today().isoformat()
+    conn.execute(
+        "INSERT OR IGNORE INTO daily_counts (camera_serial,date) VALUES (?,?)", (serial, today)
+    )
+    col = "customer_count" if kind == "customer" else "drawer_count"
+    conn.execute(
+        f"UPDATE daily_counts SET {col}={col}+1 WHERE camera_serial=? AND date=?",
+        (serial, today),
+    )
+    conn.commit()
+    conn.close()
+
+
+def save_alert(serial, name, alert_type, monitor_type, person_count, confidence, b64=""):
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO alerts (camera_serial,camera_name,alert_type,monitor_type,person_count,confidence,annotated_b64) VALUES (?,?,?,?,?,?,?)",
+        (serial, name, alert_type, monitor_type, person_count, confidence, b64),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_alerts(page=0, page_size=20, camera_serial=None, alert_type=None, monitor_type=None):
+    conn = get_conn()
+    where, params = ["1=1"], []
+    if camera_serial:
+        where.append("camera_serial=?"); params.append(camera_serial)
+    if alert_type:
+        where.append("alert_type=?"); params.append(alert_type)
+    if monitor_type:
+        where.append("monitor_type=?"); params.append(monitor_type)
+    ws = " AND ".join(where)
+    total = conn.execute(f"SELECT COUNT(*) FROM alerts WHERE {ws}", params).fetchone()[0]
+    rows  = conn.execute(
+        f"SELECT * FROM alerts WHERE {ws} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        params + [page_size, page * page_size],
+    ).fetchall()
+    conn.close()
+    return {"total": total, "alerts": [dict(r) for r in rows]}
+
+
+def get_stats():
+    conn = get_conn()
+    today_alerts = conn.execute(
+        "SELECT COUNT(*) FROM alerts WHERE date(created_at)=date('now')"
+    ).fetchone()[0]
+    by_monitor = conn.execute(
+        "SELECT monitor_type, COUNT(*) as cnt FROM alerts WHERE date(created_at)=date('now') GROUP BY monitor_type"
+    ).fetchall()
+    hourly = conn.execute(
+        "SELECT strftime('%H',created_at) as hour, COUNT(*) as cnt FROM alerts WHERE date(created_at)=date('now') GROUP BY hour ORDER BY hour"
+    ).fetchall()
+    top_cameras = conn.execute(
+        "SELECT camera_name, COUNT(*) as cnt FROM alerts WHERE date(created_at)=date('now') GROUP BY camera_serial ORDER BY cnt DESC LIMIT 10"
+    ).fetchall()
+    customers = conn.execute(
+        "SELECT COALESCE(SUM(customer_count),0) FROM daily_counts WHERE date=date('now')"
+    ).fetchone()[0]
+    drawers = conn.execute(
+        "SELECT COALESCE(SUM(drawer_count),0) FROM daily_counts WHERE date=date('now')"
+    ).fetchone()[0]
+    cams = get_cameras()
+    conn.close()
+    return {
+        "today_alerts": today_alerts,
+        "customer_count_today": customers,
+        "drawer_opens_today": drawers,
+        "total_cameras": len(cams),
+        "active_cameras": sum(1 for c in cams if c.get("enabled", 1)),
+        "by_monitor": [dict(r) for r in by_monitor],
+        "hourly": [dict(r) for r in hourly],
+        "top_cameras": [dict(r) for r in top_cameras],
+    }
