@@ -1,47 +1,34 @@
 import { useEffect, useState } from "react";
-import {
-  ResponsiveContainer, LineChart, Line, BarChart, Bar,
-  XAxis, YAxis, Tooltip, CartesianGrid,
-} from "recharts";
+import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import { api } from "../services/api";
 
-const CHART_STYLE = {
-  backgroundColor: "#1e293b",
-  border: "1px solid #475569",
-  borderRadius: 8,
-  fontSize: 12,
-};
-
-const MONITOR_COLORS = {
-  theft:             "#ef4444",
-  customer_count:    "#22c55e",
-  cash_drawer:       "#3b82f6",
-  staff_misbehavior: "#f97316",
-  staff_idle:        "#94a3b8",
-};
+const TIP = { backgroundColor:"#111", border:"1px solid rgba(255,255,255,0.1)", borderRadius:2, fontSize:11 };
 
 export default function Analytics() {
   const [stats, setStats] = useState(null);
 
-  useEffect(() => {
-    api.getStats().then(setStats).catch(() => {});
-  }, []);
+  useEffect(() => { api.getStats().then(setStats).catch(()=>{}); }, []);
 
   if (!stats) return (
-    <div style={{ textAlign: "center", padding: "40px 0", color: "var(--muted)" }}>Loading…</div>
+    <div style={{textAlign:"center",padding:"48px 0",color:"var(--muted)",fontSize:11,letterSpacing:"0.08em",textTransform:"uppercase"}}>
+      Loading…
+    </div>
   );
 
-  const hourlyData = Array.from({ length: 24 }, (_, h) => {
-    const hh = String(h).padStart(2, "0");
+  const hourlyData = Array.from({length:24},(_,h) => {
+    const hh   = String(h).padStart(2,"0");
     const found = stats.hourly?.find(x => x.hour === hh);
-    return { hour: `${hh}:00`, alerts: found?.cnt || 0 };
+    return { hour:`${hh}:00`, alerts: found?.cnt || 0 };
   });
 
-  const byMonitorData = (stats.by_monitor || []).map(r => ({
-    name: r.monitor_type,
-    count: r.cnt,
-    fill: MONITOR_COLORS[r.monitor_type] || "#94a3b8",
-  }));
+  const STAT_ITEMS = [
+    { label:"Total Cameras",   value: stats.total_cameras       ?? 0 },
+    { label:"Alerts Today",    value: stats.today_alerts        ?? 0 },
+    { label:"Customers",       value: stats.customer_count_today ?? 0 },
+    { label:"Vehicles",        value: stats.vehicle_count_today  ?? 0 },
+    { label:"Drawer Opens",    value: stats.drawer_opens_today   ?? 0 },
+    { label:"Active Cameras",  value: stats.active_cameras      ?? 0 },
+  ];
 
   return (
     <>
@@ -49,54 +36,45 @@ export default function Analytics() {
         <div className="page-title">Analytics</div>
       </div>
 
-      <div className="stats-grid" style={{ marginBottom: 24 }}>
-        <div className="stat-card">
-          <div className="stat-label">Total Cameras</div>
-          <div className="stat-value blue">{stats.total_cameras ?? "—"}</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">Alerts Today</div>
-          <div className="stat-value red">{stats.today_alerts ?? 0}</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">Customers Today</div>
-          <div className="stat-value green">{stats.customer_count_today ?? 0}</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-label">Drawer Opens</div>
-          <div className="stat-value" style={{ color: "var(--orange)" }}>{stats.drawer_opens_today ?? 0}</div>
-        </div>
+      <div className="stats-grid" style={{marginBottom:20}}>
+        {STAT_ITEMS.map(s => (
+          <div key={s.label} className="stat-card">
+            <div className="stat-label">{s.label}</div>
+            <div className="stat-value">{s.value}</div>
+          </div>
+        ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
         <div className="card">
-          <div style={{ fontWeight: 600, marginBottom: 14 }}>Alerts by Hour (Today)</div>
+          <div style={{fontSize:10,fontWeight:500,letterSpacing:"0.1em",textTransform:"uppercase",color:"var(--muted)",marginBottom:14}}>
+            Alerts by Hour — Today
+          </div>
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={hourlyData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis dataKey="hour" tick={{ fill: "#94a3b8", fontSize: 11 }} interval={3} />
-                <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
-                <Tooltip contentStyle={CHART_STYLE} />
-                <Line type="monotone" dataKey="alerts" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="hour" tick={{fill:"rgba(255,255,255,0.3)",fontSize:10}} interval={3} />
+                <YAxis tick={{fill:"rgba(255,255,255,0.3)",fontSize:10}} allowDecimals={false} />
+                <Tooltip contentStyle={TIP} labelStyle={{color:"#fff"}} />
+                <Line type="monotone" dataKey="alerts" stroke="#fff" strokeWidth={1.5} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
 
         <div className="card">
-          <div style={{ fontWeight: 600, marginBottom: 14 }}>Alerts by Monitor Mode</div>
+          <div style={{fontSize:10,fontWeight:500,letterSpacing:"0.1em",textTransform:"uppercase",color:"var(--muted)",marginBottom:14}}>
+            Alerts by Type — Today
+          </div>
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={byMonitorData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} />
-                <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
-                <Tooltip contentStyle={CHART_STYLE} />
-                <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Alerts"
-                  fill="#3b82f6"
-                  label={false}
-                />
+              <BarChart data={stats.by_alert_type || []}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="alert_type" tick={{fill:"rgba(255,255,255,0.3)",fontSize:9}} />
+                <YAxis tick={{fill:"rgba(255,255,255,0.3)",fontSize:10}} allowDecimals={false} />
+                <Tooltip contentStyle={TIP} />
+                <Bar dataKey="cnt" fill="rgba(255,255,255,0.7)" radius={[2,2,0,0]} name="Alerts" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -105,15 +83,17 @@ export default function Analytics() {
 
       {stats.top_cameras?.length > 0 && (
         <div className="card">
-          <div style={{ fontWeight: 600, marginBottom: 14 }}>Top Cameras by Alerts Today</div>
+          <div style={{fontSize:10,fontWeight:500,letterSpacing:"0.1em",textTransform:"uppercase",color:"var(--muted)",marginBottom:14}}>
+            Top Cameras by Alerts — Today
+          </div>
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={stats.top_cameras} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis type="number" tick={{ fill: "#94a3b8", fontSize: 11 }} allowDecimals={false} />
-                <YAxis type="category" dataKey="camera_name" tick={{ fill: "#94a3b8", fontSize: 11 }} width={120} />
-                <Tooltip contentStyle={CHART_STYLE} />
-                <Bar dataKey="cnt" fill="#f97316" radius={[0, 4, 4, 0]} name="Alerts" />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis type="number" tick={{fill:"rgba(255,255,255,0.3)",fontSize:10}} allowDecimals={false} />
+                <YAxis type="category" dataKey="camera_name" tick={{fill:"rgba(255,255,255,0.3)",fontSize:10}} width={110} />
+                <Tooltip contentStyle={TIP} />
+                <Bar dataKey="cnt" fill="rgba(255,255,255,0.5)" radius={[0,2,2,0]} name="Alerts" />
               </BarChart>
             </ResponsiveContainer>
           </div>

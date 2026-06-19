@@ -1,7 +1,6 @@
 import axios from "axios";
 
 const BASE = import.meta.env.VITE_API_URL || "";
-
 const http = axios.create({ baseURL: BASE });
 
 export const api = {
@@ -10,7 +9,6 @@ export const api = {
   updateCamera: (serial, body) => http.patch(`/api/cameras/${serial}`, body).then(r => r.data),
   deleteCamera: (serial)       => http.delete(`/api/cameras/${serial}`).then(r => r.data),
   testCamera:   (serial)       => http.post(`/api/cameras/${serial}/test`).then(r => r.data),
-  getSnapshot:  (serial)       => http.get(`/api/cameras/${serial}/snapshot`).then(r => r.data),
 
   getAlerts: (params) => http.get("/api/alerts", { params }).then(r => r.data),
   getStats:  ()       => http.get("/api/stats").then(r => r.data),
@@ -24,7 +22,7 @@ export function openAlertWS(onMessage) {
     .replace(/^http/, "ws");
   const ws = new WebSocket(`${wsBase}/ws/alerts`);
   ws.onmessage = (e) => {
-    try { onMessage(JSON.parse(e.data)); } catch { }
+    try { onMessage(JSON.parse(e.data)); } catch {}
   };
   return ws;
 }

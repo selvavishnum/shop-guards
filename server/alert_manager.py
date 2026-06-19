@@ -1,4 +1,5 @@
 import time
+import json
 import smtplib
 import base64
 import threading
@@ -13,17 +14,20 @@ _cooldowns: dict[str, float] = {}
 _ws_listeners: list = []
 
 ALERT_LABELS = {
-    "intrusion":      "Zone Intrusion",
-    "after_hours":    "After-Hours Alert",
-    "crowd":          "Crowd Alert",
-    "customer_entry": "Customer Entry",
-    "drawer_open":    "Cash Drawer Opened",
-    "misbehavior":    "Staff Misbehavior",
-    "staff_idle":     "Staff Idle Alert",
+    "intrusion":        "Zone Intrusion",
+    "after_hours":      "After-Hours Alert",
+    "crowd":            "Crowd Alert",
+    "customer_entry":   "Customer Entry",
+    "drawer_open":      "Cash Drawer Opened",
+    "misbehavior":      "Staff Misbehavior",
+    "staff_idle":       "Staff Idle Alert",
+    "vehicle_detected": "Vehicle Detected",
+    "phone_use":        "Phone Use Detected",
+    "bag_suspicious":   "Suspicious Bag",
 }
 
 
-def register_ws(q):    _ws_listeners.append(q)
+def register_ws(q):   _ws_listeners.append(q)
 def unregister_ws(q):
     try: _ws_listeners.remove(q)
     except ValueError: pass
@@ -38,15 +42,15 @@ async def broadcast(event: dict):
 def _cooled(key: str, secs: int) -> bool:
     return time.time() - _cooldowns.get(key, 0) < secs
 
-
 def _mark(key: str):
     _cooldowns[key] = time.time()
 
 
 async def process(serial: str, name: str, detection: dict, cam: dict):
-    monitor = cam.get("monitor_type", "theft")
-    import json
-    zones      = json.loads(cam.get("zones", "[]"))
+    monitor  = cam.get("monitor_type", "theft")
+    features = json.loads(cam.get("features") or "{}") or {"theft": True}
+    zones    = json.loads(cam.get("zones", "[]"))
+
     settings   = {k: get_setting(k) for k in
                   ["shop_open","shop_close","alert_cooldown","crowd_threshold","idle_threshold"]}
     shop_open  = settings["shop_open"]  or "08:00"
@@ -55,18 +59,22 @@ async def process(serial: str, name: str, detection: dict, cam: dict):
     crowd_th   = int(settings["crowd_threshold"] or 5)
     idle_th    = int(settings["idle_threshold"]  or 5)
 
-    count      = detection["person_count"]
-    in_zone    = detection["in_zone_count"]
-    motion     = detection["motion_score"]
-    b64        = detection["annotated_b64"]
-    conf       = max((p["confidence"] for p in detection["persons"]), default=0.0)
+    count         = detection["person_count"]
+    vehicle_count = detection["vehicle_count"]
+    phone_count   = detection["phone_count"]
+    bag_count     = detection["bag_count"]
+    in_zone       = detection["in_zone_count"]
+    vehicle_zone  = detection["vehicle_in_zone"]
+    motion        = detection["motion_score"]
+    b64           = detection["annotated_b64"]
+    conf          = max((p["confidence"] for p in detection["persons"]), default=0.0)
 
     now_t    = datetime.datetime.now().strftime("%H:%M")
     in_hours = shop_open <= now_t <= shop_close
 
     triggered = []
 
-    if monitor == "theft":
+    if features.get("theft", True):
         if in_zone > 0 and not _cooled(f"{serial}:intrusion", cooldown):
             triggered.append("intrusion"); _mark(f"{serial}:intrusion")
         if count > 0 and not in_hours and not _cooled(f"{serial}:after_hours", cooldown):
@@ -74,38 +82,52 @@ async def process(serial: str, name: str, detection: dict, cam: dict):
         if count >= crowd_th and not _cooled(f"{serial}:crowd", cooldown * 2):
             triggered.append("crowd"); _mark(f"{serial}:crowd")
 
-    elif monitor == "customer_count":
-        if count > 0 and not _cooled(f"{serial}:customer_entry", 30):
-            inc_daily(serial, "customer"); _mark(f"{serial}:customer_entry")
-            triggered.append("customer_entry")
+    if features.get("vehicle") and vehicle_count > 0:
+        if not _cooled(f"{serial}:vehicle", cooldown):
+            triggered.append("vehicle_detected"); _mark(f"{serial}:vehicle")
+            inc_daily(serial, "vehicle")
 
-    elif monitor == "cash_drawer":
-        if in_zone > 0 and motion > 0.06 and not _cooled(f"{serial}:drawer_open", 30):
-            inc_daily(serial, "drawer"); _mark(f"{serial}:drawer_open")
-            triggered.append("drawer_open")
-        if in_zone > 0 and not in_hours and not _cooled(f"{serial}:after_hours", cooldown):
-            triggered.append("after_hours"); _mark(f"{serial}:after_hours")
-
-    elif monitor == "staff_misbehavior":
+    if features.get("staff"):
+        if phone_count > 0 and not _cooled(f"{serial}:phone", cooldown):
+            triggered.append("phone_use"); _mark(f"{serial}:phone")
         if count >= 2 and motion > 0.10 and not _cooled(f"{serial}:misbehavior", cooldown):
             triggered.append("misbehavior"); _mark(f"{serial}:misbehavior")
-
-    elif monitor == "staff_idle":
         if count == 0 and in_hours:
             inc_empty_scans(serial)
             cam_row = get_camera(serial)
             if cam_row and cam_row["empty_scans"] >= idle_th:
                 if not _cooled(f"{serial}:staff_idle", cooldown * 2):
                     triggered.append("staff_idle"); _mark(f"{serial}:staff_idle")
-        else:
+        elif count > 0:
             reset_empty_scans(serial)
 
+    if features.get("product") and bag_count > 0 and in_zone:
+        if not _cooled(f"{serial}:bag", cooldown):
+            triggered.append("bag_suspicious"); _mark(f"{serial}:bag")
+
+    if monitor == "customer_count":
+        if count > 0 and not _cooled(f"{serial}:customer_entry", 30):
+            inc_daily(serial, "customer"); _mark(f"{serial}:customer_entry")
+            triggered.append("customer_entry")
+
+    if monitor == "cash_drawer":
+        if in_zone > 0 and motion > 0.06 and not _cooled(f"{serial}:drawer_open", 30):
+            inc_daily(serial, "drawer"); _mark(f"{serial}:drawer_open")
+            triggered.append("drawer_open")
+        if in_zone > 0 and not in_hours and not _cooled(f"{serial}:after_hours", cooldown):
+            triggered.append("after_hours"); _mark(f"{serial}:after_hours")
+
     for alert_type in triggered:
-        save_alert(serial, name, alert_type, monitor, count, conf, b64)
+        save_alert(serial, name, alert_type, monitor, count, conf, b64, vehicle_count)
         event = {
-            "camera_serial": serial, "camera_name": name,
-            "alert_type": alert_type, "monitor_type": monitor,
-            "person_count": count, "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "type":          "alert",
+            "camera_serial": serial,
+            "camera_name":   name,
+            "alert_type":    alert_type,
+            "monitor_type":  monitor,
+            "person_count":  count,
+            "vehicle_count": vehicle_count,
+            "time":          time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         await broadcast(event)
         threading.Thread(target=_send_email, args=(event, b64), daemon=True).start()
@@ -120,11 +142,11 @@ def _send_email(event: dict, b64: str):
     label   = ALERT_LABELS.get(event["alert_type"], event["alert_type"])
     subject = f"[ShopGuard] {label} — {event['camera_name']}"
     body    = (
-        f"Alert:   {label}\n"
-        f"Camera:  {event['camera_name']}\n"
-        f"Mode:    {event['monitor_type']}\n"
-        f"Persons: {event['person_count']}\n"
-        f"Time:    {event['time']}\n"
+        f"Alert:    {label}\n"
+        f"Camera:   {event['camera_name']}\n"
+        f"Persons:  {event['person_count']}\n"
+        f"Vehicles: {event.get('vehicle_count', 0)}\n"
+        f"Time:     {event['time']}\n"
     )
     msg = MIMEMultipart()
     msg["From"], msg["To"], msg["Subject"] = efrom, eto, subject
