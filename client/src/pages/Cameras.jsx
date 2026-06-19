@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, Trash2, Edit2, Wifi, X, CheckCircle, XCircle } from "lucide-react";
+import { Plus, Trash2, Edit2, Wifi, X, CheckCircle, XCircle, AlertTriangle } from "lucide-react";
 import { api } from "../services/api";
 
 const MONITOR_OPTIONS = [
@@ -11,6 +11,10 @@ const MONITOR_OPTIONS = [
 ];
 
 const EMPTY = { serial:"", name:"", location:"", rtsp_url:"", monitor_type:"theft" };
+
+function isLocalIP(url) {
+  return /rtsp:\/\/[^@]*@?(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)\d+/.test(url);
+}
 
 export default function CamerasPage() {
   const [cameras,  setCameras]   = useState([]);
@@ -105,11 +109,30 @@ export default function CamerasPage() {
               <input className="form-input" value={form.rtsp_url} onChange={e=>set("rtsp_url",e.target.value)}
                 placeholder="rtsp://admin:PASSWORD@PUBLIC_IP:554/Streaming/Channels/101" />
               <div style={{fontSize:10,color:"var(--muted)",marginTop:5}}>
-                Hikvision DVR: /Streaming/Channels/101 (cam1) · 201 (cam2) · Mi: /stream1
+                Hikvision DVR: /Streaming/Channels/101 (cam1) · 201 (cam2 main) · Mi: /stream1
               </div>
             </div>
           </div>
-          {error && <div style={{marginTop:10,fontSize:12,color:"rgba(255,255,255,0.6)"}}>{error}</div>}
+
+          {isLocalIP(form.rtsp_url) && (
+            <div className="warn-banner" style={{marginTop:12}}>
+              <AlertTriangle size={14} strokeWidth={1.5} style={{flexShrink:0,marginTop:1}} />
+              <div>
+                <strong>Local IP detected — camera unreachable from cloud.</strong><br/>
+                <span style={{fontSize:11}}>
+                  192.168.x.x addresses are only visible inside your shop WiFi.
+                  The server runs on Render.com and cannot reach your local network.<br/>
+                  <strong>Fix:</strong> On your Mi router (192.168.31.1) → Port Forwarding:<br/>
+                  &nbsp;• DVR (Hikvision): external <strong>554</strong> → 192.168.31.36:554<br/>
+                  &nbsp;• Ezviz CS-C6N: external <strong>5541</strong> → 192.168.31.92:554<br/>
+                  &nbsp;• Mi Camera: external <strong>5542</strong> → 192.168.31.72:554<br/>
+                  Then use your public IP in the RTSP URL, e.g. <code>rtsp://admin:PASS@PUBLIC_IP:5542/stream1</code>
+                </span>
+              </div>
+            </div>
+          )}
+
+          {error && <div style={{marginTop:10,fontSize:12,color:"var(--muted)"}}>{error}</div>}
           <div style={{display:"flex",gap:8,marginTop:14}}>
             <button type="submit" className="btn btn-primary btn-sm" disabled={saving}>
               <Plus size={12} strokeWidth={1.5} /> {saving?"Saving…":editing?"Update":"Add Camera"}
@@ -135,20 +158,33 @@ export default function CamerasPage() {
           {cameras.map(cam => (
             <div key={cam.serial} className="card card-sm" style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontWeight:400,fontSize:13,marginBottom:3}}>{cam.name}</div>
+                <div style={{fontWeight:400,fontSize:13,marginBottom:3,display:"flex",alignItems:"center",gap:8}}>
+                  {cam.name}
+                  {isLocalIP(cam.rtsp_url||"") && (
+                    <span title="Local IP — unreachable from cloud. Set up port forwarding."
+                      style={{fontSize:9,background:"#f59e0b",color:"#000",padding:"1px 5px",borderRadius:2,fontWeight:600,letterSpacing:"0.05em"}}>
+                      LOCAL IP
+                    </span>
+                  )}
+                </div>
                 <div style={{fontSize:11,color:"var(--muted)",marginBottom:2}}>
                   {cam.location && <span>{cam.location} · </span>}
                   <span style={{fontFamily:"monospace"}}>{cam.serial}</span>
                   {" · "}{cam.monitor_type}
                 </div>
-                <div style={{fontSize:10,color:"rgba(255,255,255,0.2)",wordBreak:"break-all"}}>{cam.rtsp_url}</div>
+                <div style={{fontSize:10,color:"var(--dim)",wordBreak:"break-all"}}>{cam.rtsp_url}</div>
+                {tests[cam.serial]===false && isLocalIP(cam.rtsp_url||"") && (
+                  <div style={{fontSize:10,color:"#f59e0b",marginTop:4}}>
+                    Connection failed — local IP unreachable from cloud. Port-forward on your Mi router (192.168.31.1) first.
+                  </div>
+                )}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:7,flexShrink:0}}>
                 <span className={`badge${cam.enabled ? "" : " badge-muted"}`}>
                   {cam.enabled ? "ON" : "OFF"}
                 </span>
-                {tests[cam.serial]===true  && <CheckCircle size={14} strokeWidth={1.5} style={{color:"var(--text)"}} />}
-                {tests[cam.serial]===false && <XCircle     size={14} strokeWidth={1.5} style={{color:"rgba(255,255,255,0.35)"}} />}
+                {tests[cam.serial]===true  && <CheckCircle size={14} strokeWidth={1.5} style={{color:"#22c55e"}} />}
+                {tests[cam.serial]===false && <XCircle     size={14} strokeWidth={1.5} style={{color:"#f59e0b"}} />}
                 <button className="btn btn-outline btn-xs" onClick={()=>handleTest(cam.serial)} disabled={testing===cam.serial}>
                   <Wifi size={11} strokeWidth={1.5} /> {testing===cam.serial?"…":"Test"}
                 </button>
