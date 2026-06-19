@@ -1,5 +1,8 @@
 import asyncio
+import io
 import json
+import base64
+import time
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import get_cameras, get_setting, update_snapshot
 import rtsp_client
@@ -10,28 +13,43 @@ _scheduler: AsyncIOScheduler | None = None
 
 
 async def _scan_camera(cam: dict):
-    serial = cam["serial"]
-    name   = cam.get("name", serial)
-    rtsp   = cam.get("rtsp_url", "")
+    serial   = cam["serial"]
+    name     = cam.get("name", serial)
+    rtsp     = cam.get("rtsp_url", "")
     if not rtsp:
         return
 
-    zones = json.loads(cam.get("zones", "[]"))
-    monitor = cam.get("monitor_type", "theft")
+    zones    = json.loads(cam.get("zones", "[]"))
+    monitor  = cam.get("monitor_type", "theft")
+    features = json.loads(cam.get("features") or "{}") or {"theft": True}
 
     try:
         image = await rtsp_client.capture_frame(rtsp)
         if image is None:
             return
-        detection = ai_detector.analyze(serial, image, zones, monitor)
-        if detection["annotated_b64"]:
-            update_snapshot(serial, detection["annotated_b64"])
-        elif detection["person_count"] == 0:
-            import io, base64
+
+        detection = ai_detector.analyze(serial, image, zones, monitor, features)
+
+        snap_b64 = detection["annotated_b64"]
+        if not snap_b64:
             buf = io.BytesIO()
             image.save(buf, format="JPEG", quality=60)
-            update_snapshot(serial, base64.b64encode(buf.getvalue()).decode())
+            snap_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        update_snapshot(serial, snap_b64)
+
+        await alert_manager.broadcast({
+            "type":          "snapshot",
+            "camera_serial": serial,
+            "camera_name":   name,
+            "b64":           snap_b64,
+            "person_count":  detection["person_count"],
+            "vehicle_count": detection["vehicle_count"],
+            "timestamp":     time.strftime("%H:%M:%S"),
+        })
+
         await alert_manager.process(serial, name, detection, cam)
+
     except Exception:
         pass
 
@@ -44,7 +62,7 @@ async def _scan_all():
         batch = cameras[i:i + 5]
         await asyncio.gather(*[_scan_camera(c) for c in batch])
         if i + 5 < len(cameras):
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
 
 
 def start_scheduler():

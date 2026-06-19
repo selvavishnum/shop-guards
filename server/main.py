@@ -74,11 +74,12 @@ class CameraCreate(BaseModel):
     location: str = ""
     rtsp_url: str
     monitor_type: str = "theft"
+    features: str | None = None
 
 
 @app.post("/api/cameras")
 async def add_camera(body: CameraCreate):
-    database.add_camera(body.serial, body.name, body.location, body.rtsp_url, body.monitor_type)
+    database.add_camera(body.serial, body.name, body.location, body.rtsp_url, body.monitor_type, body.features)
     return {"ok": True}
 
 
@@ -89,6 +90,7 @@ class CameraUpdate(BaseModel):
     monitor_type: str | None = None
     enabled: int | None = None
     zones: str | None = None
+    features: str | None = None
 
 
 @app.patch("/api/cameras/{serial}")
