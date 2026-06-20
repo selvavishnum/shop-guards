@@ -1,9 +1,10 @@
 import asyncio
 import json
 import os
+import time
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -19,6 +20,7 @@ import alert_manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.init_db()
+    database.ensure_agent_key()
     _seed_env_settings()
     try:
         scheduler.start_scheduler()
@@ -174,6 +176,90 @@ async def save_settings(body: SettingsBody):
         except Exception:
             pass
     return {"ok": True}
+
+
+# ── On-site Agent ingest ──────────────────────────────────────────────────────
+# The on-site agent runs YOLO locally in the shop (cameras stay on the LAN) and
+# pushes detection results + snapshots here. RTSP credentials never leave the shop.
+
+_REQUIRED_DET_KEYS = {
+    "person_count": 0, "vehicle_count": 0, "bag_count": 0, "phone_count": 0,
+    "in_zone_count": 0, "vehicle_in_zone": 0, "motion_score": 0.0,
+    "annotated_b64": "", "persons": [], "vehicles": [], "bags": [], "phones": [],
+}
+
+
+def _normalize_detection(det: dict, monitor_type: str) -> dict:
+    out = dict(_REQUIRED_DET_KEYS)
+    out.update(det or {})
+    out["monitor_type"] = monitor_type
+    # persons must carry a "confidence" for downstream max() — backfill if missing
+    out["persons"] = [
+        p if isinstance(p, dict) and "confidence" in p else {"confidence": 0.0, **(p or {})}
+        for p in (out.get("persons") or [])
+    ]
+    return out
+
+
+class IngestBody(BaseModel):
+    serial: str
+    name: str | None = None
+    location: str | None = None
+    monitor_type: str = "theft"
+    features: str | None = None
+    snapshot_b64: str | None = ""
+    detection: dict
+
+
+@app.post("/api/ingest")
+async def ingest(body: IngestBody, x_agent_key: str = Header(default="")):
+    if not x_agent_key or x_agent_key != database.get_setting("agent_key"):
+        return JSONResponse({"error": "invalid agent key"}, status_code=401)
+
+    cam = database.get_camera(body.serial)
+    if not cam:
+        # Auto-register on first sight. RTSP stays on-site, so we store a placeholder.
+        database.add_camera(
+            body.serial, body.name or body.serial, body.location or "",
+            "(on-site agent)", body.monitor_type, body.features,
+        )
+        cam = database.get_camera(body.serial)
+
+    monitor  = cam.get("monitor_type", body.monitor_type)
+    det      = _normalize_detection(body.detection, monitor)
+    snap_b64 = body.snapshot_b64 or det.get("annotated_b64", "")
+
+    if snap_b64:
+        database.update_snapshot(body.serial, snap_b64)
+
+    database.set_setting("agent_last_seen", str(int(time.time())))
+
+    await alert_manager.broadcast({
+        "type":          "snapshot",
+        "camera_serial": body.serial,
+        "camera_name":   cam.get("name", body.serial),
+        "b64":           snap_b64,
+        "person_count":  det["person_count"],
+        "vehicle_count": det["vehicle_count"],
+        "timestamp":     time.strftime("%H:%M:%S"),
+    })
+
+    await alert_manager.process(body.serial, cam.get("name", body.serial), det, cam)
+    return {"ok": True}
+
+
+@app.get("/api/agent/status")
+async def agent_status():
+    key  = database.ensure_agent_key()
+    seen = database.get_setting("agent_last_seen", "")
+    last = int(seen) if seen.isdigit() else 0
+    age  = int(time.time()) - last if last else None
+    return {
+        "agent_key":  key,
+        "last_seen":  last,
+        "online":     age is not None and age < 90,
+        "seconds_ago": age,
+    }
 
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import secrets
 from datetime import date
 
 DB_PATH = os.environ.get("DB_PATH", "shopguard.db")
@@ -100,6 +101,20 @@ def init_db():
     except Exception:
         pass
     conn.close()
+
+
+def ensure_agent_key():
+    """Generate a persistent on-site agent key on first boot if absent."""
+    conn = get_conn()
+    row = conn.execute("SELECT value FROM settings WHERE key='agent_key'").fetchone()
+    if not row or not row["value"]:
+        key = "sg_" + secrets.token_urlsafe(24)
+        conn.execute("INSERT OR REPLACE INTO settings VALUES ('agent_key', ?)", (key,))
+        conn.commit()
+    else:
+        key = row["value"]
+    conn.close()
+    return key
 
 
 def get_setting(key, default=""):

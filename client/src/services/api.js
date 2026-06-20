@@ -15,6 +15,8 @@ export const api = {
 
   getSettings:  ()     => http.get("/api/settings").then(r => r.data),
   saveSettings: (body) => http.post("/api/settings", body).then(r => r.data),
+
+  getAgentStatus: () => http.get("/api/agent/status").then(r => r.data),
 };
 
 export function openAlertWS(onMessage) {

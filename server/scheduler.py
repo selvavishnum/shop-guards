@@ -16,7 +16,8 @@ async def _scan_camera(cam: dict):
     serial   = cam["serial"]
     name     = cam.get("name", serial)
     rtsp     = cam.get("rtsp_url", "")
-    if not rtsp:
+    # Skip cameras driven by the on-site agent (they push to /api/ingest instead).
+    if not rtsp or not rtsp.startswith("rtsp://"):
         return
 
     zones    = json.loads(cam.get("zones", "[]"))
