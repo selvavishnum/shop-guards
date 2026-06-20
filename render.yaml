@@ -4,7 +4,11 @@ services:
     name: shopguard-api
     runtime: python
     rootDir: server
-    buildCommand: apt-get install -y ffmpeg libglib2.0-0 libsm6 libxext6 && pip install -r requirements.txt
+    buildCommand: >-
+      DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
+      apt-get install -y --no-install-recommends ffmpeg libglib2.0-0 libsm6 libxext6 libxrender1 &&
+      pip install --upgrade pip &&
+      pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
