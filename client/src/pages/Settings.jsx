@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Copy, Check } from "lucide-react";
 import { api } from "../services/api";
 
 export default function SettingsPage() {
@@ -9,10 +10,22 @@ export default function SettingsPage() {
   });
   const [saving, setSaving] = useState(false);
   const [saved,  setSaved]  = useState(false);
+  const [agent,  setAgent]  = useState(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     api.getSettings().then(s => setForm(f => ({...f,...s}))).catch(()=>{});
+    const loadAgent = () => api.getAgentStatus().then(setAgent).catch(()=>{});
+    loadAgent();
+    const t = setInterval(loadAgent, 15000);
+    return () => clearInterval(t);
   }, []);
+
+  const copyKey = () => {
+    if (!agent?.agent_key) return;
+    navigator.clipboard?.writeText(agent.agent_key);
+    setCopied(true); setTimeout(()=>setCopied(false), 2000);
+  };
 
   const set = (k,v) => setForm(f => ({...f,[k]:v}));
 
@@ -36,6 +49,39 @@ export default function SettingsPage() {
         <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
           {saving?"Saving…":saved?"Saved ✓":"Save"}
         </button>
+      </div>
+
+      <div className="card" style={{marginBottom:8,borderTop:"2px solid var(--accent)"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+          <div style={{fontSize:10,fontWeight:500,letterSpacing:"0.1em",textTransform:"uppercase",color:"var(--muted)"}}>
+            On-Site AI Agent
+          </div>
+          <span className={`badge${agent?.online ? "" : " badge-muted"}`} style={agent?.online ? {background:"var(--green)"} : {}}>
+            {agent?.online ? "● Online" : "○ Offline"}
+          </span>
+        </div>
+        <div style={{fontSize:11,color:"var(--muted)",lineHeight:1.7,marginBottom:14}}>
+          Run AI on the cameras from inside your shop — no port-forwarding, passwords stay local.
+          Install the agent on a shop PC/Raspberry Pi (see <code style={{fontSize:10}}>agent/README.md</code>),
+          then paste the key below into its <code style={{fontSize:10}}>config.yaml</code>.
+        </div>
+        <label className="form-label">Agent Key</label>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <input className="form-input" readOnly value={agent?.agent_key || "loading…"}
+            style={{fontFamily:"monospace",fontSize:11}} onFocus={e=>e.target.select()} />
+          <button className="btn btn-outline btn-sm" onClick={copyKey} style={{flexShrink:0}}>
+            {copied ? <><Check size={12} strokeWidth={1.5}/> Copied</> : <><Copy size={12} strokeWidth={1.5}/> Copy</>}
+          </button>
+        </div>
+        {agent?.last_seen ? (
+          <div style={{fontSize:10,color:"var(--muted)",marginTop:8}}>
+            Last data received {agent.seconds_ago != null ? `${agent.seconds_ago}s ago` : "—"}.
+          </div>
+        ) : (
+          <div style={{fontSize:10,color:"var(--muted)",marginTop:8}}>
+            No agent has connected yet. Start the agent on your shop machine.
+          </div>
+        )}
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
