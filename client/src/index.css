@@ -424,6 +424,7 @@ input, select, textarea { font: inherit; }
 }
 .alert-item:hover { box-shadow: 0 3px 10px rgba(0,0,0,0.1); }
 .alert-item.intrusion       { border-left-color: #dc2626; }
+.alert-item.drawer_no_customer { border-left-color: #dc2626; background: #fff5f5; }
 .alert-item.misbehavior     { border-left-color: #ea580c; }
 .alert-item.crowd           { border-left-color: #d97706; }
 .alert-item.vehicle_detected{ border-left-color: #7c3aed; }

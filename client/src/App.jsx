@@ -9,16 +9,17 @@ import CamerasPage from "./pages/Cameras";
 import { openAlertWS } from "./services/api";
 
 const ALERT_LABELS = {
-  intrusion:       "Zone Intrusion",
-  after_hours:     "After-Hours",
-  crowd:           "Crowd Alert",
-  customer_entry:  "Customer Entry",
-  drawer_open:     "Cash Drawer",
-  misbehavior:     "Misbehavior",
-  staff_idle:      "Staff Idle",
-  vehicle_detected:"Vehicle",
-  phone_use:       "Phone Use",
-  bag_suspicious:  "Suspicious Bag",
+  intrusion:         "Zone Intrusion",
+  after_hours:       "After-Hours",
+  crowd:             "Crowd Alert",
+  customer_entry:    "Customer Entry",
+  drawer_open:       "Cash Drawer",
+  drawer_no_customer:"Drawer — No Customer",
+  misbehavior:       "Misbehavior",
+  staff_idle:        "Staff Idle",
+  vehicle_detected:  "Vehicle",
+  phone_use:         "Phone Use",
+  bag_suspicious:    "Suspicious Bag",
 };
 
 export default function App() {
