@@ -14,16 +14,17 @@ _cooldowns: dict[str, float] = {}
 _ws_listeners: list = []
 
 ALERT_LABELS = {
-    "intrusion":        "Zone Intrusion",
-    "after_hours":      "After-Hours Alert",
-    "crowd":            "Crowd Alert",
-    "customer_entry":   "Customer Entry",
-    "drawer_open":      "Cash Drawer Opened",
-    "misbehavior":      "Staff Misbehavior",
-    "staff_idle":       "Staff Idle Alert",
-    "vehicle_detected": "Vehicle Detected",
-    "phone_use":        "Phone Use Detected",
-    "bag_suspicious":   "Suspicious Bag",
+    "intrusion":         "Zone Intrusion",
+    "after_hours":       "After-Hours Alert",
+    "crowd":             "Crowd Alert",
+    "customer_entry":    "Customer Entry",
+    "drawer_open":       "Cash Drawer Opened",
+    "drawer_no_customer":"Drawer Opened — No Customer",
+    "misbehavior":       "Staff Misbehavior",
+    "staff_idle":        "Staff Idle Alert",
+    "vehicle_detected":  "Vehicle Detected",
+    "phone_use":         "Phone Use Detected",
+    "bag_suspicious":    "Suspicious Bag",
 }
 
 
@@ -113,7 +114,12 @@ async def process(serial: str, name: str, detection: dict, cam: dict):
     if monitor == "cash_drawer":
         if in_zone > 0 and motion > 0.06 and not _cooled(f"{serial}:drawer_open", 30):
             inc_daily(serial, "drawer"); _mark(f"{serial}:drawer_open")
-            triggered.append("drawer_open")
+            # <=1 person means only the cashier — drawer opened with no customer
+            # at the counter is the suspicious case owners care about most.
+            if count <= 1:
+                triggered.append("drawer_no_customer")
+            else:
+                triggered.append("drawer_open")
         if in_zone > 0 and not in_hours and not _cooled(f"{serial}:after_hours", cooldown):
             triggered.append("after_hours"); _mark(f"{serial}:after_hours")
 

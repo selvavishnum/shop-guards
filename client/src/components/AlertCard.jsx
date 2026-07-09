@@ -1,16 +1,17 @@
 import { Clock, Camera, Users, Car } from "lucide-react";
 
 export const ALERT_LABELS = {
-  intrusion:       "Zone Intrusion",
-  after_hours:     "After-Hours Alert",
-  crowd:           "Crowd Alert",
-  customer_entry:  "Customer Entry",
-  drawer_open:     "Cash Drawer Opened",
-  misbehavior:     "Staff Misbehavior",
-  staff_idle:      "Staff Idle Alert",
-  vehicle_detected:"Vehicle Detected",
-  phone_use:       "Phone Use Detected",
-  bag_suspicious:  "Suspicious Bag",
+  intrusion:         "Zone Intrusion",
+  after_hours:       "After-Hours Alert",
+  crowd:             "Crowd Alert",
+  customer_entry:    "Customer Entry",
+  drawer_open:       "Cash Drawer Opened",
+  drawer_no_customer:"Drawer Opened — No Customer",
+  misbehavior:       "Staff Misbehavior",
+  staff_idle:        "Staff Idle Alert",
+  vehicle_detected:  "Vehicle Detected",
+  phone_use:         "Phone Use Detected",
+  bag_suspicious:    "Suspicious Bag",
 };
 
 export default function AlertCard({ alert }) {
