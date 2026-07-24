@@ -262,6 +262,105 @@ async def agent_status():
     }
 
 
+def _agent_authed(x_agent_key: str) -> bool:
+    return bool(x_agent_key) and x_agent_key == database.get_setting("agent_key")
+
+
+# ── Staff / Face-Recognition Attendance ───────────────────────────────────────
+# Enrollment photos are uploaded here from the dashboard. The on-site agent
+# (which runs the face model locally) polls /api/staff/pending, computes the
+# 512-d ArcFace embedding from the photo, and pushes it back via
+# /api/staff/{id}/embedding — the raw photo is discarded once that happens.
+# Matching happens on the agent; the cloud only ever sees a match result.
+
+class StaffCreate(BaseModel):
+    name: str
+    role: str = "staff"
+    face_b64: str
+
+
+@app.get("/api/staff")
+async def get_staff():
+    return {"staff": database.get_staff_list()}
+
+
+@app.post("/api/staff")
+async def add_staff(body: StaffCreate):
+    sid = database.add_staff(body.name, body.role, body.face_b64)
+    return {"ok": True, "id": sid}
+
+
+@app.delete("/api/staff/{staff_id}")
+async def delete_staff(staff_id: int):
+    database.delete_staff(staff_id)
+    return {"ok": True}
+
+
+@app.get("/api/staff/pending")
+async def staff_pending(x_agent_key: str = Header(default="")):
+    if not _agent_authed(x_agent_key):
+        return JSONResponse({"error": "invalid agent key"}, status_code=401)
+    return {"staff": database.get_pending_staff()}
+
+
+@app.get("/api/staff/enrolled")
+async def staff_enrolled(x_agent_key: str = Header(default="")):
+    if not _agent_authed(x_agent_key):
+        return JSONResponse({"error": "invalid agent key"}, status_code=401)
+    return {"staff": database.get_enrolled_staff()}
+
+
+class EmbeddingBody(BaseModel):
+    embedding: list[float]
+
+
+@app.post("/api/staff/{staff_id}/embedding")
+async def set_staff_embedding(staff_id: int, body: EmbeddingBody, x_agent_key: str = Header(default="")):
+    if not _agent_authed(x_agent_key):
+        return JSONResponse({"error": "invalid agent key"}, status_code=401)
+    database.set_staff_embedding(staff_id, json.dumps(body.embedding))
+    return {"ok": True}
+
+
+# ── Attendance ────────────────────────────────────────────────────────────────
+
+class AttendanceBody(BaseModel):
+    staff_id: int
+    staff_name: str
+    camera_serial: str
+    confidence: float = 0.0
+
+
+@app.post("/api/attendance/log")
+async def attendance_log(body: AttendanceBody, x_agent_key: str = Header(default="")):
+    if not _agent_authed(x_agent_key):
+        return JSONResponse({"error": "invalid agent key"}, status_code=401)
+    event_type = database.log_attendance(body.staff_id, body.staff_name, body.camera_serial, body.confidence)
+    await alert_manager.broadcast({
+        "type":          "attendance",
+        "staff_id":      body.staff_id,
+        "staff_name":    body.staff_name,
+        "event_type":    event_type,
+        "camera_serial": body.camera_serial,
+        "time":          time.strftime("%Y-%m-%d %H:%M:%S"),
+    })
+    return {"ok": True, "event_type": event_type}
+
+
+@app.get("/api/attendance")
+async def get_attendance(
+    page: int = Query(0, ge=0),
+    page_size: int = Query(20, ge=1, le=100),
+    staff_id: int | None = None,
+):
+    return database.get_attendance(page, page_size, staff_id)
+
+
+@app.get("/api/attendance/summary")
+async def attendance_summary():
+    return {"summary": database.get_attendance_today_summary()}
+
+
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 
 @app.websocket("/ws/alerts")
