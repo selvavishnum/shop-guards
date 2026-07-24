@@ -17,6 +17,13 @@ export const api = {
   saveSettings: (body) => http.post("/api/settings", body).then(r => r.data),
 
   getAgentStatus: () => http.get("/api/agent/status").then(r => r.data),
+
+  getStaffList: ()   => http.get("/api/staff").then(r => r.data),
+  addStaff:     (body) => http.post("/api/staff", body).then(r => r.data),
+  deleteStaff:  (id)   => http.delete(`/api/staff/${id}`).then(r => r.data),
+
+  getAttendance:        (params) => http.get("/api/attendance", { params }).then(r => r.data),
+  getAttendanceSummary: () => http.get("/api/attendance/summary").then(r => r.data),
 };
 
 export function openAlertWS(onMessage) {

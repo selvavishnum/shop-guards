@@ -7,3 +7,9 @@ opencv-python==4.10.0.84
 numpy==1.26.4
 requests==2.32.3
 PyYAML==6.0.2
+
+# Face-recognition attendance (optional — only used when config.yaml sets
+# enable_face: true). Downloads ~300MB of models on first run. Comment these
+# two lines out if you don't need staff attendance and want a lighter install.
+insightface==0.7.3
+onnxruntime==1.19.2

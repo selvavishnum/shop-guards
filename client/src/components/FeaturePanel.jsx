@@ -7,7 +7,7 @@ const FEATURES = [
   { key: "vehicle",        label: "Vehicle",  desc: "Cars, bikes, trucks" },
   { key: "human_tracking", label: "Tracking", desc: "Track persons by ID" },
   { key: "staff",          label: "Staff",    desc: "Phone use, idle, behavior" },
-  { key: "face",           label: "Face",     desc: "Known vs unknown persons" },
+  { key: "face",           label: "Face",     desc: "Staff attendance (check in/out)" },
   { key: "product",        label: "Product",  desc: "Bags, backpacks in zone" },
 ];
 

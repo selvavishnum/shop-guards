@@ -32,8 +32,33 @@ jpeg_quality: 70
 config_sync_interval: 30
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Face-recognition staff attendance (optional)
+#
+#  Set enable_face: true to load the face model at startup (first run
+#  downloads ~300MB). Then, on the dashboard's Staff page, upload one clear
+#  photo per employee — this agent enrolls them automatically within
+#  staff_sync_interval seconds, and any camera with features.face: true will
+#  log a check-in/check-out the moment that person is recognized.
+# ─────────────────────────────────────────────────────────────────────────────
+enable_face: false
+
+# Cosine-similarity match threshold (0.0-1.0). Higher = stricter match,
+# fewer false positives but more missed recognitions. 0.40 is a good default
+# for InsightFace's buffalo_l ArcFace model.
+face_threshold: 0.40
+
+# Minimum seconds between attendance logs for the SAME staff member, across
+# ALL cameras — prevents one long look at the camera from logging multiple
+# check-in/check-out toggles.
+attendance_cooldown: 120
+
+# How often (seconds) to check for newly-uploaded staff photos to enroll,
+# and refresh the list of enrolled staff for matching.
+staff_sync_interval: 30
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Cameras  — these RTSP URLs use your LOCAL IPs and stay inside the shop.
-#  features:  theft | vehicle | staff | product   (true/false)
+#  features:  theft | vehicle | staff | product | face   (true/false)
 #  monitor_type:  theft | customer_count | cash_drawer | staff_misbehavior | staff_idle
 # ─────────────────────────────────────────────────────────────────────────────
 cameras:
@@ -43,7 +68,8 @@ cameras:
     location: Entrance
     rtsp_url: rtsp://admin:Tu123456@192.168.31.36:554/Streaming/Channels/101
     monitor_type: theft
-    features: { theft: true, vehicle: true, staff: false, product: false }
+    # Entrance is a good spot for face recognition — set enable_face: true above to use it.
+    features: { theft: true, vehicle: true, staff: false, product: false, face: true }
     zones: []
 
   # Hikvision DVR — Channel 2 main stream

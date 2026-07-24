@@ -1,11 +1,13 @@
 import { Routes, Route, NavLink } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
-import { LayoutGrid, Bell, BarChart2, Settings, Shield, Video } from "lucide-react";
+import { LayoutGrid, Bell, BarChart2, Settings, Shield, Video, Users, Clock } from "lucide-react";
 import Dashboard   from "./pages/Dashboard";
 import Alerts      from "./pages/Alerts";
 import Analytics   from "./pages/Analytics";
 import SettingsPage from "./pages/Settings";
 import CamerasPage from "./pages/Cameras";
+import StaffPage   from "./pages/Staff";
+import AttendancePage from "./pages/Attendance";
 import { openAlertWS } from "./services/api";
 
 const ALERT_LABELS = {
@@ -45,7 +47,7 @@ export default function App() {
           }));
           return;
         }
-        if (event.type === "alert") {
+        if (event.type === "alert" || event.type === "attendance") {
           const id = Date.now();
           setToasts(t => [...t.slice(-4), { id, event }]);
           setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 5000);
@@ -86,10 +88,16 @@ export default function App() {
         <NavLink to="/analytics" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
           <BarChart2 size={14} strokeWidth={1.5} /> Analytics
         </NavLink>
+        <NavLink to="/attendance" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+          <Clock size={14} strokeWidth={1.5} /> Attendance
+        </NavLink>
 
         <div className="nav-section">System</div>
         <NavLink to="/cameras" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
           <Video size={14} strokeWidth={1.5} /> Cameras
+        </NavLink>
+        <NavLink to="/staff" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+          <Users size={14} strokeWidth={1.5} /> Staff
         </NavLink>
         <NavLink to="/settings" className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
           <Settings size={14} strokeWidth={1.5} /> Settings
@@ -101,7 +109,9 @@ export default function App() {
           <Route path="/"          element={<Dashboard liveCams={liveCams} />} />
           <Route path="/alerts"    element={<Alerts />} />
           <Route path="/analytics" element={<Analytics />} />
+          <Route path="/attendance" element={<AttendancePage />} />
           <Route path="/cameras"   element={<CamerasPage />} />
+          <Route path="/staff"    element={<StaffPage />} />
           <Route path="/settings"  element={<SettingsPage />} />
         </Routes>
       </main>
@@ -109,14 +119,27 @@ export default function App() {
       <div className="toast-container">
         {toasts.map(({ id, event }) => (
           <div key={id} className="toast">
-            <div className="toast-title">
-              {ALERT_LABELS[event.alert_type] || event.alert_type} — {event.camera_name}
-            </div>
-            <div className="toast-body">
-              {event.person_count > 0 && `${event.person_count} person${event.person_count !== 1 ? "s" : ""}`}
-              {event.vehicle_count > 0 && ` · ${event.vehicle_count} vehicle${event.vehicle_count !== 1 ? "s" : ""}`}
-              {" · "}{event.time?.slice(11, 16)}
-            </div>
+            {event.type === "attendance" ? (
+              <>
+                <div className="toast-title">
+                  {event.staff_name} — {event.event_type === "in" ? "Checked In" : "Checked Out"}
+                </div>
+                <div className="toast-body">
+                  {event.camera_serial}{" · "}{event.time?.slice(11, 16)}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="toast-title">
+                  {ALERT_LABELS[event.alert_type] || event.alert_type} — {event.camera_name}
+                </div>
+                <div className="toast-body">
+                  {event.person_count > 0 && `${event.person_count} person${event.person_count !== 1 ? "s" : ""}`}
+                  {event.vehicle_count > 0 && ` · ${event.vehicle_count} vehicle${event.vehicle_count !== 1 ? "s" : ""}`}
+                  {" · "}{event.time?.slice(11, 16)}
+                </div>
+              </>
+            )}
           </div>
         ))}
       </div>

@@ -37,6 +37,93 @@ def log(msg, cam=""):
     print(f"{ts} {tag}{msg}", flush=True)
 
 
+# ── Attendance cooldown (shared across all camera workers) ──────────────────
+# Prevents the same staff member being logged twice in quick succession —
+# whether from one camera scanning repeatedly, or several cameras seeing the
+# same face at once.
+_attendance_lock      = threading.Lock()
+_attendance_last_seen = {}  # staff_id -> unix time
+
+
+def _attendance_cooldown_ok(staff_id, secs):
+    now = time.time()
+    with _attendance_lock:
+        last = _attendance_last_seen.get(staff_id, 0)
+        if now - last < secs:
+            return False
+        _attendance_last_seen[staff_id] = now
+        return True
+
+
+# ── Staff directory sync ─────────────────────────────────────────────────────
+class StaffDirectory:
+    """Enrolls staff photos uploaded from the dashboard (computes their ArcFace
+    embedding locally) and caches enrolled embeddings for matching."""
+
+    def __init__(self, cloud_url, agent_key, face_engine, interval=30):
+        self.base     = cloud_url.rstrip("/")
+        self.headers  = {"X-Agent-Key": agent_key}
+        self.engine   = face_engine
+        self.interval = interval
+        self._lock     = threading.Lock()
+        self._enrolled = []
+        self._last     = 0
+
+    def enrolled(self):
+        with self._lock:
+            return list(self._enrolled)
+
+    def maybe_refresh(self):
+        if time.time() - self._last < self.interval:
+            return
+        self._last = time.time()
+        self._enroll_pending()
+        self._refresh_enrolled()
+
+    def _enroll_pending(self):
+        try:
+            r = requests.get(f"{self.base}/api/staff/pending", headers=self.headers, timeout=10)
+            r.raise_for_status()
+            pending = r.json().get("staff", [])
+        except Exception as e:
+            log(f"staff sync failed: {e}")
+            return
+
+        if not pending:
+            return
+
+        import cv2
+        import numpy as np
+
+        for person in pending:
+            try:
+                raw = base64.b64decode(person["face_b64"])
+                arr = np.frombuffer(raw, dtype=np.uint8)
+                img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                faces = self.engine.detect(img) if img is not None else []
+                if not faces:
+                    log(f"no face found in enrollment photo for '{person['name']}' — use a clearer front-facing photo")
+                    continue
+                faces.sort(key=lambda f: f["det_score"], reverse=True)
+                embedding = faces[0]["embedding"].tolist()
+                requests.post(
+                    f"{self.base}/api/staff/{person['id']}/embedding",
+                    json={"embedding": embedding}, headers=self.headers, timeout=10,
+                )
+                log(f"enrolled face for '{person['name']}'")
+            except Exception as e:
+                log(f"enrollment failed for '{person.get('name')}': {e}")
+
+    def _refresh_enrolled(self):
+        try:
+            r = requests.get(f"{self.base}/api/staff/enrolled", headers=self.headers, timeout=10)
+            r.raise_for_status()
+            with self._lock:
+                self._enrolled = r.json().get("staff", [])
+        except Exception as e:
+            log(f"enrolled staff fetch failed: {e}")
+
+
 # ── Cloud config sync ────────────────────────────────────────────────────────
 class ConfigSync:
     """Periodically pulls camera features/zones/monitor_type from the dashboard so
@@ -85,16 +172,18 @@ class ConfigSync:
 
 # ── Per-camera worker ────────────────────────────────────────────────────────
 class CameraWorker(threading.Thread):
-    def __init__(self, cam, cfg, detector, sync):
+    def __init__(self, cam, cfg, detector, sync, face_engine=None, staff_dir=None):
         super().__init__(daemon=True)
-        self.cam      = cam
-        self.cfg      = cfg
-        self.detector = detector
-        self.sync     = sync
-        self.serial   = cam["serial"]
-        self.rtsp     = cam["rtsp_url"]
-        self._cap     = None
-        self._stop    = threading.Event()
+        self.cam         = cam
+        self.cfg         = cfg
+        self.detector    = detector
+        self.sync        = sync
+        self.face_engine = face_engine
+        self.staff_dir   = staff_dir
+        self.serial      = cam["serial"]
+        self.rtsp        = cam["rtsp_url"]
+        self._cap        = None
+        self._stop       = threading.Event()
 
     # ---- camera connection (kept open for a smooth feed) --------------------
     def _open(self):
@@ -170,6 +259,48 @@ class CameraWorker(threading.Thread):
                 else:
                     time.sleep(delay); delay *= 2
 
+    # ---- face recognition -> attendance --------------------------------------
+    def _process_faces(self, frame):
+        if self.face_engine is None or self.staff_dir is None:
+            return
+        try:
+            faces = self.face_engine.detect(frame)
+        except Exception as e:
+            log(f"face detect error: {e}", self.serial)
+            return
+        if not faces:
+            return
+
+        enrolled = self.staff_dir.enrolled()
+        if not enrolled:
+            return
+
+        threshold = float(self.cfg.get("face_threshold", 0.40))
+        cooldown  = int(self.cfg.get("attendance_cooldown", 120))
+
+        from face_engine import FaceEngine
+        for f in faces:
+            staff, score = FaceEngine.best_match(f["embedding"], enrolled, threshold)
+            if staff and _attendance_cooldown_ok(staff["id"], cooldown):
+                self._log_attendance(staff, score)
+
+    def _log_attendance(self, staff, score):
+        payload = {
+            "staff_id":      staff["id"],
+            "staff_name":    staff["name"],
+            "camera_serial": self.serial,
+            "confidence":    round(score, 3),
+        }
+        url     = self.cfg["cloud_url"].rstrip("/") + "/api/attendance/log"
+        headers = {"X-Agent-Key": self.cfg["agent_key"]}
+        try:
+            r = requests.post(url, json=payload, headers=headers, timeout=10)
+            r.raise_for_status()
+            event = r.json().get("event_type", "?")
+            log(f"attendance: {staff['name']} -> {event} ({score:.2f})", self.serial)
+        except Exception as e:
+            log(f"attendance upload failed: {e}", self.serial)
+
     # ---- main loop ----------------------------------------------------------
     def run(self):
         interval     = float(self.cfg.get("scan_interval", 5))
@@ -186,6 +317,8 @@ class CameraWorker(threading.Thread):
                 backoff = 3
 
             self.sync.maybe_refresh()
+            if self.staff_dir is not None:
+                self.staff_dir.maybe_refresh()
             features, zones, monitor, enabled = self._effective()
 
             if not enabled:
@@ -204,6 +337,8 @@ class CameraWorker(threading.Thread):
                 d = result["detection"]
                 if d["person_count"] or d["vehicle_count"]:
                     log(f"{d['person_count']}P {d['vehicle_count']}V", self.serial)
+                if features.get("face"):
+                    self._process_faces(frame)
             except Exception as e:
                 log(f"analyze error: {e}", self.serial)
 
@@ -238,6 +373,23 @@ def main():
     sync     = ConfigSync(cfg["cloud_url"], int(cfg.get("config_sync_interval", 30)))
     sync.maybe_refresh()
 
+    face_engine = None
+    staff_dir   = None
+    if cfg.get("enable_face"):
+        try:
+            log("Loading face recognition engine (first run downloads ~300MB models)…")
+            from face_engine import FaceEngine
+            face_engine = FaceEngine()
+            staff_dir = StaffDirectory(
+                cfg["cloud_url"], cfg["agent_key"], face_engine,
+                int(cfg.get("staff_sync_interval", 30)),
+            )
+            staff_dir.maybe_refresh()
+            log(f"Face recognition ready — {len(staff_dir.enrolled())} staff enrolled")
+        except Exception as e:
+            log(f"Face engine failed to load, continuing without attendance: {e}")
+            face_engine, staff_dir = None, None
+
     log(f"Cloud: {cfg['cloud_url']}")
     log(f"Cameras: {len(cfg['cameras'])} · scan every {cfg.get('scan_interval', 5)}s")
 
@@ -248,7 +400,7 @@ def main():
             continue
         cam.setdefault("features", {"theft": True})
         cam.setdefault("zones", [])
-        w = CameraWorker(cam, cfg, detector, sync)
+        w = CameraWorker(cam, cfg, detector, sync, face_engine, staff_dir)
         w.start()
         workers.append(w)
 

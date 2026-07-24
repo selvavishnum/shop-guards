@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import json
 import secrets
 from datetime import date
 
@@ -59,8 +60,19 @@ def init_db():
             name        TEXT NOT NULL,
             role        TEXT DEFAULT 'staff',
             face_b64    TEXT DEFAULT '',
+            embedding   TEXT DEFAULT '',
             active      INTEGER DEFAULT 1,
             created_at  TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS attendance (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id        INTEGER NOT NULL,
+            staff_name      TEXT NOT NULL,
+            camera_serial   TEXT NOT NULL,
+            event_type      TEXT NOT NULL DEFAULT 'in',
+            confidence      REAL DEFAULT 0.0,
+            created_at      TEXT DEFAULT (datetime('now'))
         );
 
         CREATE TABLE IF NOT EXISTS settings (
@@ -68,8 +80,10 @@ def init_db():
             value   TEXT NOT NULL
         );
 
-        CREATE INDEX IF NOT EXISTS idx_alerts_time   ON alerts(created_at DESC);
-        CREATE INDEX IF NOT EXISTS idx_alerts_camera ON alerts(camera_serial);
+        CREATE INDEX IF NOT EXISTS idx_alerts_time      ON alerts(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_alerts_camera    ON alerts(camera_serial);
+        CREATE INDEX IF NOT EXISTS idx_attendance_staff ON attendance(staff_id);
+        CREATE INDEX IF NOT EXISTS idx_attendance_time  ON attendance(created_at DESC);
 
         INSERT OR IGNORE INTO settings VALUES ('scan_interval',   '60');
         INSERT OR IGNORE INTO settings VALUES ('crowd_threshold', '5');
@@ -97,6 +111,11 @@ def init_db():
             pass
     try:
         conn.execute("ALTER TABLE alerts ADD COLUMN vehicle_count INTEGER DEFAULT 0")
+        conn.commit()
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE staff ADD COLUMN embedding TEXT DEFAULT ''")
         conn.commit()
     except Exception:
         pass
@@ -282,3 +301,148 @@ def get_stats():
         "hourly":              [dict(r) for r in hourly],
         "top_cameras":         [dict(r) for r in top_cameras],
     }
+
+
+# ── Staff / Face-Recognition Attendance ───────────────────────────────────────
+# Enrollment photos are uploaded from the dashboard (staff.face_b64). The
+# on-site agent (which already loads the face model locally) polls for
+# not-yet-enrolled staff, computes a 512-d ArcFace embedding from the photo,
+# and pushes it back — the raw photo is then discarded, only the embedding
+# is kept. Matching against enrolled staff happens on the agent too (brute-
+# force cosine similarity over a handful of embeddings is instant); the
+# cloud only ever receives a match result, never a face.
+
+def add_staff(name, role, face_b64):
+    conn = get_conn()
+    cur = conn.execute(
+        "INSERT INTO staff (name,role,face_b64,embedding) VALUES (?,?,?,'')",
+        (name, role, face_b64),
+    )
+    conn.commit()
+    sid = cur.lastrowid
+    conn.close()
+    return sid
+
+
+def get_staff_list():
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id,name,role,active,created_at,"
+        " (embedding IS NOT NULL AND embedding != '') as enrolled"
+        " FROM staff ORDER BY name"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_pending_staff():
+    """Staff with an enrollment photo but no computed embedding yet."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id,name,face_b64 FROM staff"
+        " WHERE (embedding IS NULL OR embedding='') AND face_b64 != ''"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def set_staff_embedding(staff_id, embedding_json):
+    conn = get_conn()
+    conn.execute("UPDATE staff SET embedding=?, face_b64='' WHERE id=?", (embedding_json, staff_id))
+    conn.commit()
+    conn.close()
+
+
+def get_enrolled_staff():
+    """Returns [{id, name, embedding: [floats]}] for active, enrolled staff."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT id,name,embedding FROM staff"
+        " WHERE embedding IS NOT NULL AND embedding != '' AND active=1"
+    ).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        try:
+            emb = json.loads(r["embedding"])
+        except Exception:
+            continue
+        out.append({"id": r["id"], "name": r["name"], "embedding": emb})
+    return out
+
+
+def delete_staff(staff_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM staff WHERE id=?", (staff_id,))
+    conn.execute("DELETE FROM attendance WHERE staff_id=?", (staff_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_last_attendance(staff_id):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT event_type, created_at FROM attendance WHERE staff_id=? ORDER BY created_at DESC LIMIT 1",
+        (staff_id,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def log_attendance(staff_id, staff_name, camera_serial, confidence):
+    """Toggles in/out based on the staff member's last event and records it."""
+    last = get_last_attendance(staff_id)
+    event_type = "in" if (not last or last["event_type"] == "out") else "out"
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO attendance (staff_id,staff_name,camera_serial,event_type,confidence) VALUES (?,?,?,?,?)",
+        (staff_id, staff_name, camera_serial, event_type, confidence),
+    )
+    conn.commit()
+    conn.close()
+    return event_type
+
+
+def get_attendance(page=0, page_size=20, staff_id=None):
+    conn = get_conn()
+    where, params = ["1=1"], []
+    if staff_id:
+        where.append("staff_id=?"); params.append(staff_id)
+    ws = " AND ".join(where)
+    total = conn.execute(f"SELECT COUNT(*) FROM attendance WHERE {ws}", params).fetchone()[0]
+    rows = conn.execute(
+        f"SELECT * FROM attendance WHERE {ws} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        params + [page_size, page * page_size],
+    ).fetchall()
+    conn.close()
+    return {"total": total, "events": [dict(r) for r in rows]}
+
+
+def get_attendance_today_summary():
+    conn = get_conn()
+    latest = conn.execute("""
+        SELECT a.staff_id, a.staff_name, a.event_type as status, a.created_at as last_time
+        FROM attendance a
+        INNER JOIN (
+            SELECT staff_id, MAX(created_at) as max_created
+            FROM attendance WHERE date(created_at)=date('now')
+            GROUP BY staff_id
+        ) latest ON a.staff_id=latest.staff_id AND a.created_at=latest.max_created
+    """).fetchall()
+    first_in_rows = conn.execute("""
+        SELECT staff_id, MIN(created_at) as first_in
+        FROM attendance WHERE date(created_at)=date('now') AND event_type='in'
+        GROUP BY staff_id
+    """).fetchall()
+    conn.close()
+    first_in_map = {r["staff_id"]: r["first_in"] for r in first_in_rows}
+    return [
+        {
+            "staff_id":   r["staff_id"],
+            "staff_name": r["staff_name"],
+            "status":     r["status"],
+            "first_in":   first_in_map.get(r["staff_id"]),
+            "last_time":  r["last_time"],
+        }
+        for r in latest
+    ]
