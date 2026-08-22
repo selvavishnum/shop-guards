@@ -33,9 +33,12 @@ async def lifespan(app: FastAPI):
 
 def _seed_env_settings():
     for key, env in [
-        ("email_from",     "EMAIL_FROM"),
-        ("email_password", "EMAIL_PASSWORD"),
-        ("email_to",       "EMAIL_TO"),
+        ("email_from",       "EMAIL_FROM"),
+        ("email_password",   "EMAIL_PASSWORD"),
+        ("email_to",         "EMAIL_TO"),
+        ("ezviz_app_key",    "EZVIZ_APP_KEY"),
+        ("ezviz_app_secret", "EZVIZ_APP_SECRET"),
+        ("ezviz_api_base",   "EZVIZ_API_BASE"),
     ]:
         val = os.environ.get(env, "")
         if val:
@@ -165,6 +168,14 @@ async def get_stats():
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
+def _ezviz_env_flags() -> dict:
+    return {
+        "key":    bool(os.environ.get("EZVIZ_APP_KEY")),
+        "secret": bool(os.environ.get("EZVIZ_APP_SECRET")),
+        "base":   bool(os.environ.get("EZVIZ_API_BASE")),
+    }
+
+
 @app.get("/api/settings")
 async def get_settings():
     s = database.get_all_settings()
@@ -172,6 +183,17 @@ async def get_settings():
     s.pop("ezviz_app_secret", None)
     s.pop("ezviz_access_token", None)
     s.pop("ezviz_token_expiry", None)
+
+    env = _ezviz_env_flags()
+    # App Key isn't as sensitive as the secret, but once it's set via Render
+    # there's no reason to also surface it to the browser — hide it too.
+    if env["key"]:
+        s.pop("ezviz_app_key", None)
+    if env["base"]:
+        s.pop("ezviz_api_base", None)
+    s["ezviz_key_env_managed"]    = env["key"]
+    s["ezviz_secret_env_managed"] = env["secret"]
+    s["ezviz_base_env_managed"]   = env["base"]
     s["ezviz_configured"] = bool(database.get_setting("ezviz_app_key") and _has_ezviz_secret())
     return s
 
@@ -199,6 +221,17 @@ class SettingsBody(BaseModel):
 @app.post("/api/settings")
 async def save_settings(body: SettingsBody):
     data = {k: v for k, v in body.model_dump().items() if v is not None}
+
+    # Env-managed Ezviz fields are authoritative once set on Render — never
+    # let a web request (buggy client, stale tab, anything) override them.
+    env = _ezviz_env_flags()
+    if env["key"]:
+        data.pop("ezviz_app_key", None)
+    if env["secret"]:
+        data.pop("ezviz_app_secret", None)
+    if env["base"]:
+        data.pop("ezviz_api_base", None)
+
     ezviz_changed = any(k in data for k in ("ezviz_app_key", "ezviz_app_secret", "ezviz_api_base"))
     for k, v in data.items():
         database.set_setting(k, v)

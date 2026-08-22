@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, Lock } from "lucide-react";
 import { api } from "../services/api";
 
 export default function SettingsPage() {
@@ -17,11 +17,17 @@ export default function SettingsPage() {
   const [ezvizTesting,    setEzvizTesting]    = useState(false);
   const [ezvizTestOk,     setEzvizTestOk]     = useState(null);
   const [ezvizTestError,  setEzvizTestError]  = useState("");
+  const [ezvizEnv, setEzvizEnv] = useState({ key:false, secret:false, base:false });
 
   useEffect(() => {
     api.getSettings().then(s => {
       setForm(f => ({...f,...s}));
       setEzvizConfigured(!!s.ezviz_configured);
+      setEzvizEnv({
+        key:    !!s.ezviz_key_env_managed,
+        secret: !!s.ezviz_secret_env_managed,
+        base:   !!s.ezviz_base_env_managed,
+      });
     }).catch(()=>{});
     const loadAgent = () => api.getAgentStatus().then(setAgent).catch(()=>{});
     loadAgent();
@@ -32,11 +38,11 @@ export default function SettingsPage() {
   const handleEzvizTest = async () => {
     setEzvizTesting(true); setEzvizTestOk(null); setEzvizTestError("");
     try {
-      await api.saveSettings({
-        ezviz_app_key: form.ezviz_app_key,
-        ezviz_app_secret: form.ezviz_app_secret,
-        ezviz_api_base: form.ezviz_api_base,
-      });
+      const payload = {};
+      if (!ezvizEnv.key)    payload.ezviz_app_key    = form.ezviz_app_key;
+      if (!ezvizEnv.secret) payload.ezviz_app_secret = form.ezviz_app_secret;
+      if (!ezvizEnv.base)   payload.ezviz_api_base   = form.ezviz_api_base;
+      if (Object.keys(payload).length) await api.saveSettings(payload);
       const r = await api.testEzviz();
       setEzvizTestOk(r.ok);
       setEzvizTestError(r.ok ? "" : (r.error || "Unknown failure"));
@@ -129,15 +135,36 @@ export default function SettingsPage() {
           from the Ezviz Open Platform developer console, paste them below, then add the camera
           on the Cameras page with connection type "Ezviz Cloud".
         </div>
+
+        {(ezvizEnv.key || ezvizEnv.secret) && (
+          <div className="warn-banner" style={{marginBottom:12,background:"var(--accent-s)",borderLeftColor:"var(--accent)"}}>
+            <Lock size={14} strokeWidth={1.5} style={{flexShrink:0,marginTop:1,color:"var(--accent-d)"}} />
+            <div style={{fontSize:11,color:"var(--text)",lineHeight:1.6}}>
+              <strong>Managed via Render environment variables</strong> — set on Render, not here, for security.
+              Change them in your Render dashboard (<code style={{fontSize:10}}>EZVIZ_APP_KEY</code> /
+              <code style={{fontSize:10}}> EZVIZ_APP_SECRET</code>) and they take effect on the next restart.
+              They never pass through this website.
+            </div>
+          </div>
+        )}
+
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
           <div className="form-group" style={{marginBottom:0}}>
-            <label className="form-label">App Key</label>
-            <input className="form-input" value={form.ezviz_app_key} onChange={e=>set("ezviz_app_key",e.target.value)} placeholder="from open.ezvizlife.com" />
+            <label className="form-label">App Key {ezvizEnv.key && <Lock size={9} strokeWidth={2} style={{verticalAlign:"middle",marginLeft:3}} />}</label>
+            {ezvizEnv.key ? (
+              <input className="form-input" disabled value="•••• set via Render ••••" style={{color:"var(--muted)"}} />
+            ) : (
+              <input className="form-input" value={form.ezviz_app_key} onChange={e=>set("ezviz_app_key",e.target.value)} placeholder="from open.ezvizlife.com" />
+            )}
           </div>
           <div className="form-group" style={{marginBottom:0}}>
-            <label className="form-label">App Secret</label>
-            <input className="form-input" type="password" value={form.ezviz_app_secret} onChange={e=>set("ezviz_app_secret",e.target.value)}
-              placeholder={ezvizConfigured ? "Saved — leave blank to keep" : "your app secret"} />
+            <label className="form-label">App Secret {ezvizEnv.secret && <Lock size={9} strokeWidth={2} style={{verticalAlign:"middle",marginLeft:3}} />}</label>
+            {ezvizEnv.secret ? (
+              <input className="form-input" disabled value="•••• set via Render ••••" style={{color:"var(--muted)"}} />
+            ) : (
+              <input className="form-input" type="password" value={form.ezviz_app_secret} onChange={e=>set("ezviz_app_secret",e.target.value)}
+                placeholder={ezvizConfigured ? "Saved — leave blank to keep" : "your app secret"} />
+            )}
           </div>
         </div>
         <div style={{fontSize:10,color:"var(--muted)",marginTop:10,marginBottom:10}}>
@@ -148,9 +175,13 @@ export default function SettingsPage() {
           <code style={{fontSize:9}}>openeu.ezvizlife.com</code> (Europe)
         </div>
         <div className="form-group" style={{marginBottom:12}}>
-          <label className="form-label">API Region (optional override)</label>
-          <input className="form-input" value={form.ezviz_api_base} onChange={e=>set("ezviz_api_base",e.target.value)}
-            placeholder="https://isgpopen.ezvizlife.com (default)" />
+          <label className="form-label">API Region (optional override) {ezvizEnv.base && <Lock size={9} strokeWidth={2} style={{verticalAlign:"middle",marginLeft:3}} />}</label>
+          {ezvizEnv.base ? (
+            <input className="form-input" disabled value="•••• set via Render (EZVIZ_API_BASE) ••••" style={{color:"var(--muted)"}} />
+          ) : (
+            <input className="form-input" value={form.ezviz_api_base} onChange={e=>set("ezviz_api_base",e.target.value)}
+              placeholder="https://isgpopen.ezvizlife.com (default)" />
+          )}
         </div>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button className="btn btn-outline btn-sm" onClick={handleEzvizTest} disabled={ezvizTesting}>
