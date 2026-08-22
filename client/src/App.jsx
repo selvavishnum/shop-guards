@@ -1,6 +1,6 @@
-import { Routes, Route, NavLink } from "react-router-dom";
+import { Routes, Route, NavLink, useLocation } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
-import { LayoutGrid, Bell, BarChart2, Settings, Shield, Video, Users, Clock } from "lucide-react";
+import { LayoutGrid, Bell, BarChart2, Settings, Shield, Video, Users, Clock, Menu, X } from "lucide-react";
 import Dashboard   from "./pages/Dashboard";
 import Alerts      from "./pages/Alerts";
 import Analytics   from "./pages/Analytics";
@@ -28,10 +28,15 @@ const ALERT_LABELS = {
 export default function App() {
   const [toasts, setToasts] = useState([]);
   const [wsOk,   setWsOk]   = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const wsRef = useRef(null);
+  const location = useLocation();
 
   // cameras state for live snapshot updates
   const [liveCams, setLiveCams] = useState({});
+
+  // Close the mobile nav drawer automatically whenever the route changes.
+  useEffect(() => { setNavOpen(false); }, [location.pathname]);
 
   useEffect(() => {
     function connect() {
@@ -66,6 +71,9 @@ export default function App() {
   return (
     <div className="layout">
       <header className="topbar">
+        <button className="menu-btn" onClick={() => setNavOpen(o => !o)} aria-label="Menu">
+          {navOpen ? <X size={18} strokeWidth={1.5} /> : <Menu size={18} strokeWidth={1.5} />}
+        </button>
         <div className="topbar-logo">
           <Shield size={16} strokeWidth={1.5} />
           ShopGuard AI
@@ -76,7 +84,9 @@ export default function App() {
         </div>
       </header>
 
-      <nav className="sidebar">
+      {navOpen && <div className="nav-backdrop" onClick={() => setNavOpen(false)} />}
+
+      <nav className={`sidebar${navOpen ? " open" : ""}`}>
         <div className="nav-section">Monitor</div>
         <NavLink to="/" end className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
           <LayoutGrid size={14} strokeWidth={1.5} /> Dashboard
