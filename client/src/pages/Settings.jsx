@@ -43,7 +43,10 @@ export default function SettingsPage() {
       if (r.ok) setEzvizConfigured(true);
     } catch (err) {
       setEzvizTestOk(false);
-      setEzvizTestError(err?.response?.data?.error || "Request to the server failed.");
+      const status = err?.response?.status;
+      const data   = err?.response?.data;
+      const detail = (data && (data.error || data.detail)) || err?.message;
+      setEzvizTestError(detail || (status ? `Server returned HTTP ${status}` : "Request to the server failed — check your internet connection."));
     }
     finally { setEzvizTesting(false); }
   };

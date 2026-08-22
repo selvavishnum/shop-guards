@@ -39,7 +39,8 @@ def _base() -> str:
 async def _fetch_token_raw(app_key: str, app_secret: str, base: str) -> tuple[bool, dict]:
     """Low-level token fetch that reports WHY it failed — wrong key, wrong
     secret, wrong region, or unreachable — instead of just True/False.
-    Used both by get_access_token() and by test_credentials() for diagnostics."""
+    Used both by get_access_token() and by test_credentials() for diagnostics.
+    Guaranteed to never raise — every branch returns a (bool, dict) tuple."""
     url = f"{base}/api/lapp/token/get"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -49,19 +50,24 @@ async def _fetch_token_raw(app_key: str, app_secret: str, base: str) -> tuple[bo
 
     try:
         data = r.json()
+        if not isinstance(data, dict):
+            raise ValueError("response was valid JSON but not an object")
     except Exception:
         snippet = r.text[:150].replace("\n", " ") if hasattr(r, "text") else ""
-        return False, {"error": f"{base} did not return JSON (HTTP {r.status_code}): {snippet!r} — likely the wrong API region"}
+        return False, {"error": f"{base} did not return a JSON object (HTTP {r.status_code}): {snippet!r} — likely the wrong API region"}
 
-    code = str(data.get("code", ""))
-    if code == "200":
-        inner = data.get("data") or {}
-        token = inner.get("accessToken")
-        if not token:
-            return False, {"error": f"Ezviz returned code 200 but no accessToken: {data}"}
-        return True, {"accessToken": token, "expireTime": inner.get("expireTime", 0)}
-
-    return False, {"error": f"Ezviz error {code}: {data.get('msg', 'unknown error')}", "code": code}
+    try:
+        code = str(data.get("code", ""))
+        if code == "200":
+            inner = data.get("data")
+            inner = inner if isinstance(inner, dict) else {}
+            token = inner.get("accessToken")
+            if not token:
+                return False, {"error": f"Ezviz returned code 200 but no accessToken: {data}"}
+            return True, {"accessToken": token, "expireTime": inner.get("expireTime", 0)}
+        return False, {"error": f"Ezviz error {code}: {data.get('msg', 'unknown error')}", "code": code}
+    except Exception as e:
+        return False, {"error": f"Unexpected response shape from {base}: {e.__class__.__name__}: {e}"}
 
 
 async def get_access_token(force: bool = False) -> str | None:
@@ -85,6 +91,18 @@ async def get_access_token(force: bool = False) -> str | None:
     return info["accessToken"]
 
 
+async def _raw_call(url: str, payload: dict) -> dict | None:
+    """Returns the parsed JSON object, or None on any failure (network,
+    non-JSON, or JSON that isn't an object) — never raises."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(url, data=payload)
+        data = r.json()
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
 async def _post(path: str, **params) -> dict | None:
     token = await get_access_token()
     if not token:
@@ -92,42 +110,37 @@ async def _post(path: str, **params) -> dict | None:
 
     url = f"{_base()}{path}"
     payload = {**params, "accessToken": token}
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(url, data=payload)
-            data = r.json()
-    except Exception:
-        return None
+    data = await _raw_call(url, payload)
 
-    if str(data.get("code")) == "10002":  # token expired mid-flight — refresh once and retry
+    if data is not None and str(data.get("code")) == "10002":  # token expired mid-flight — refresh once
         token = await get_access_token(force=True)
         if not token:
             return None
         payload["accessToken"] = token
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                r = await client.post(url, data=payload)
-                data = r.json()
-        except Exception:
-            return None
+        data = await _raw_call(url, payload)
 
-    return data if str(data.get("code")) == "200" else None
+    return data if (data is not None and str(data.get("code")) == "200") else None
 
 
 async def test_credentials() -> dict:
     """Used by the Settings 'Test Connection' button — returns WHY it failed,
-    not just True/False, so a wrong key/secret/region can actually be told apart."""
-    app_key    = get_setting("ezviz_app_key")
-    app_secret = get_setting("ezviz_app_secret")
-    if not app_key or not app_secret:
-        return {"ok": False, "error": "App Key and App Secret are required."}
+    not just True/False, so a wrong key/secret/region can actually be told
+    apart. Wrapped in a top-level try/except as a last-resort safety net so
+    this endpoint can NEVER 500 — always a diagnosable JSON body."""
+    try:
+        app_key    = get_setting("ezviz_app_key")
+        app_secret = get_setting("ezviz_app_secret")
+        if not app_key or not app_secret:
+            return {"ok": False, "error": "App Key and App Secret are required."}
 
-    ok, info = await _fetch_token_raw(app_key, app_secret, _base())
-    if ok:
-        set_setting("ezviz_access_token", info["accessToken"])
-        set_setting("ezviz_token_expiry", str(int(info["expireTime"] / 1000)))
-        return {"ok": True}
-    return {"ok": False, "error": info.get("error", "unknown failure")}
+        ok, info = await _fetch_token_raw(app_key, app_secret, _base())
+        if ok:
+            set_setting("ezviz_access_token", info["accessToken"])
+            set_setting("ezviz_token_expiry", str(int(info["expireTime"] / 1000)))
+            return {"ok": True}
+        return {"ok": False, "error": info.get("error", "unknown failure")}
+    except Exception as e:
+        return {"ok": False, "error": f"Internal error: {e.__class__.__name__}: {e}"}
 
 
 async def list_devices() -> list[dict]:
