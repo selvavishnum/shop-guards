@@ -4,9 +4,12 @@ services:
     name: shopguard-api
     runtime: python
     rootDir: server
+    # Render's native Python runtime builds as a non-root user, so apt-get
+    # (which needs root) fails every build — this is why every deploy has
+    # been failing with "Exited with status 100 while building your code".
+    # opencv-python-headless bundles its own FFmpeg support, so no system
+    # ffmpeg/libSM/libXext packages are needed at all.
     buildCommand: >-
-      DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
-      apt-get install -y --no-install-recommends ffmpeg libglib2.0-0 libsm6 libxext6 libxrender1 &&
       pip install --upgrade pip &&
       pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
