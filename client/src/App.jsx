@@ -22,6 +22,7 @@ const ALERT_LABELS = {
   vehicle_detected:  "Vehicle",
   phone_use:         "Phone Use",
   bag_suspicious:    "Suspicious Bag",
+  print_failed:      "Bill Print Failed",
 };
 
 export default function App() {
@@ -126,6 +127,17 @@ export default function App() {
                 </div>
                 <div className="toast-body">
                   {event.camera_serial}{" · "}{event.time?.slice(11, 16)}
+                </div>
+              </>
+            ) : event.alert_type === "print_failed" ? (
+              <>
+                <div className="toast-title">
+                  {ALERT_LABELS.print_failed} — {event.camera_name}
+                </div>
+                <div className="toast-body">
+                  {event.print_reason && `${event.print_reason}`}
+                  {event.print_document && ` · ${event.print_document}`}
+                  {" · "}{event.time?.slice(11, 16)}
                 </div>
               </>
             ) : (

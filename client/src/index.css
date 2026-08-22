@@ -434,6 +434,7 @@ input, select, textarea { font: inherit; }
 .alert-item.customer_entry  { border-left-color: #16a34a; }
 .alert-item.drawer_open     { border-left-color: #c9974a; }
 .alert-item.staff_idle      { border-left-color: #64748b; }
+.alert-item.print_failed    { border-left-color: #dc2626; background: #fff5f5; }
 .alert-thumb {
   width: 80px; height: 54px;
   border-radius: 2px; overflow: hidden; flex-shrink: 0;

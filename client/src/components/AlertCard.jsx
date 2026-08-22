@@ -12,6 +12,7 @@ export const ALERT_LABELS = {
   vehicle_detected:  "Vehicle Detected",
   phone_use:         "Phone Use Detected",
   bag_suspicious:    "Suspicious Bag",
+  print_failed:      "Bill Print Failed",
 };
 
 export default function AlertCard({ alert }) {
