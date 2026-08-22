@@ -15,6 +15,7 @@ import database
 import rtsp_client
 import scheduler
 import alert_manager
+import ezviz_client
 
 
 @asynccontextmanager
@@ -74,14 +75,24 @@ class CameraCreate(BaseModel):
     serial: str
     name: str
     location: str = ""
-    rtsp_url: str
+    rtsp_url: str = ""
     monitor_type: str = "theft"
     features: str | None = None
+    source: str = "rtsp"              # rtsp | agent | ezviz_cloud
+    ezviz_serial: str = ""
+    ezviz_channel: int = 1
 
 
 @app.post("/api/cameras")
 async def add_camera(body: CameraCreate):
-    database.add_camera(body.serial, body.name, body.location, body.rtsp_url, body.monitor_type, body.features)
+    if body.source == "ezviz_cloud" and not body.ezviz_serial:
+        return JSONResponse({"error": "ezviz_serial is required for Ezviz Cloud cameras"}, status_code=400)
+    if body.source == "rtsp" and not body.rtsp_url:
+        return JSONResponse({"error": "rtsp_url is required"}, status_code=400)
+    database.add_camera(
+        body.serial, body.name, body.location, body.rtsp_url, body.monitor_type, body.features,
+        body.source, body.ezviz_serial, body.ezviz_channel,
+    )
     return {"ok": True}
 
 
@@ -93,6 +104,9 @@ class CameraUpdate(BaseModel):
     enabled: int | None = None
     zones: str | None = None
     features: str | None = None
+    source: str | None = None
+    ezviz_serial: str | None = None
+    ezviz_channel: int | None = None
 
 
 @app.patch("/api/cameras/{serial}")
@@ -112,6 +126,11 @@ async def test_camera(serial: str):
     cam = database.get_camera(serial)
     if not cam:
         return JSONResponse({"error": "Camera not found"}, status_code=404)
+    if cam.get("source") == "ezviz_cloud":
+        image = await ezviz_client.capture_frame(cam.get("ezviz_serial", ""), int(cam.get("ezviz_channel", 1)))
+        return {"ok": image is not None}
+    if cam.get("source") == "agent":
+        return {"ok": bool(cam.get("last_snapshot"))}
     ok = await rtsp_client.test_rtsp(cam["rtsp_url"])
     return {"ok": ok}
 
@@ -150,7 +169,16 @@ async def get_stats():
 async def get_settings():
     s = database.get_all_settings()
     s.pop("email_password", None)
+    s.pop("ezviz_app_secret", None)
+    s.pop("ezviz_access_token", None)
+    s.pop("ezviz_token_expiry", None)
+    s["ezviz_configured"] = bool(database.get_setting("ezviz_app_key") and _has_ezviz_secret())
     return s
+
+
+def _has_ezviz_secret() -> bool:
+    # We popped the secret above, so check the DB directly for whether one exists.
+    return bool(database.get_setting("ezviz_app_secret"))
 
 
 class SettingsBody(BaseModel):
@@ -163,11 +191,15 @@ class SettingsBody(BaseModel):
     email_from:       str | None = None
     email_password:   str | None = None
     alert_cooldown:   str | None = None
+    ezviz_app_key:    str | None = None
+    ezviz_app_secret: str | None = None
+    ezviz_api_base:   str | None = None
 
 
 @app.post("/api/settings")
 async def save_settings(body: SettingsBody):
     data = {k: v for k, v in body.model_dump().items() if v is not None}
+    ezviz_changed = any(k in data for k in ("ezviz_app_key", "ezviz_app_secret", "ezviz_api_base"))
     for k, v in data.items():
         database.set_setting(k, v)
     if "scan_interval" in data:
@@ -175,7 +207,27 @@ async def save_settings(body: SettingsBody):
             scheduler.update_interval(int(data["scan_interval"]))
         except Exception:
             pass
+    if ezviz_changed:
+        # New credentials invalidate any cached token — force a fresh one next use.
+        database.set_setting("ezviz_access_token", "")
+        database.set_setting("ezviz_token_expiry", "")
     return {"ok": True}
+
+
+# ── Ezviz Cloud ───────────────────────────────────────────────────────────────
+# Uses the App Key + App Secret saved in Settings to pull camera snapshots
+# straight from Ezviz's cloud — no RTSP, no port forwarding, no on-site agent
+# needed for cameras connected this way.
+
+@app.get("/api/ezviz/test")
+async def ezviz_test():
+    return await ezviz_client.test_credentials()
+
+
+@app.get("/api/ezviz/devices")
+async def ezviz_devices():
+    devices = await ezviz_client.list_devices()
+    return {"devices": devices}
 
 
 # ── On-site Agent ingest ──────────────────────────────────────────────────────

@@ -119,6 +119,25 @@ def init_db():
         conn.commit()
     except Exception:
         pass
+    for col, dflt_sql in [
+        ("source",        "'rtsp'"),
+        ("ezviz_serial",  "''"),
+        ("ezviz_channel", "1"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE cameras ADD COLUMN {col} TEXT DEFAULT {dflt_sql}")
+            conn.commit()
+        except Exception:
+            pass
+    for key, default in [
+        ("ezviz_app_key", ""), ("ezviz_app_secret", ""), ("ezviz_api_base", ""),
+        ("ezviz_access_token", ""), ("ezviz_token_expiry", ""),
+    ]:
+        try:
+            conn.execute("INSERT OR IGNORE INTO settings VALUES (?,?)", (key, default))
+            conn.commit()
+        except Exception:
+            pass
     conn.close()
 
 
@@ -157,11 +176,15 @@ def get_all_settings():
     return {r["key"]: r["value"] for r in rows}
 
 
-def add_camera(serial, name, location, rtsp_url, monitor_type, features=None):
+def add_camera(serial, name, location, rtsp_url, monitor_type, features=None,
+                source="rtsp", ezviz_serial="", ezviz_channel=1):
     conn = get_conn()
     conn.execute(
-        "INSERT OR REPLACE INTO cameras (serial,name,location,rtsp_url,monitor_type,features) VALUES (?,?,?,?,?,?)",
-        (serial, name, location, rtsp_url, monitor_type, features or DEFAULT_FEATURES),
+        "INSERT OR REPLACE INTO cameras"
+        " (serial,name,location,rtsp_url,monitor_type,features,source,ezviz_serial,ezviz_channel)"
+        " VALUES (?,?,?,?,?,?,?,?,?)",
+        (serial, name, location, rtsp_url, monitor_type, features or DEFAULT_FEATURES,
+         source, ezviz_serial, ezviz_channel),
     )
     conn.commit()
     conn.close()
@@ -183,7 +206,8 @@ def get_camera(serial):
 
 def update_camera(serial, **kwargs):
     conn = get_conn()
-    allowed = {"name","location","rtsp_url","monitor_type","enabled","zones","features"}
+    allowed = {"name","location","rtsp_url","monitor_type","enabled","zones","features",
+               "source","ezviz_serial","ezviz_channel"}
     for k, v in kwargs.items():
         if k in allowed and v is not None:
             conn.execute(f"UPDATE cameras SET {k}=? WHERE serial=?", (v, serial))
