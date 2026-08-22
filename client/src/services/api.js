@@ -24,6 +24,9 @@ export const api = {
 
   getAttendance:        (params) => http.get("/api/attendance", { params }).then(r => r.data),
   getAttendanceSummary: () => http.get("/api/attendance/summary").then(r => r.data),
+
+  testEzviz:    () => http.get("/api/ezviz/test").then(r => r.data),
+  getEzvizDevices: () => http.get("/api/ezviz/devices").then(r => r.data),
 };
 
 export function openAlertWS(onMessage) {

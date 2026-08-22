@@ -6,6 +6,7 @@ import time
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import get_cameras, get_setting, update_snapshot
 import rtsp_client
+import ezviz_client
 import ai_detector
 import alert_manager
 
@@ -13,11 +14,12 @@ _scheduler: AsyncIOScheduler | None = None
 
 
 async def _scan_camera(cam: dict):
-    serial   = cam["serial"]
-    name     = cam.get("name", serial)
-    rtsp     = cam.get("rtsp_url", "")
-    # Skip cameras driven by the on-site agent (they push to /api/ingest instead).
-    if not rtsp or not rtsp.startswith("rtsp://"):
+    serial  = cam["serial"]
+    name    = cam.get("name", serial)
+    source  = cam.get("source", "rtsp")
+
+    # Cameras driven by the on-site agent push to /api/ingest instead — skip here.
+    if source == "agent":
         return
 
     zones    = json.loads(cam.get("zones", "[]"))
@@ -25,7 +27,17 @@ async def _scan_camera(cam: dict):
     features = json.loads(cam.get("features") or "{}") or {"theft": True}
 
     try:
-        image = await rtsp_client.capture_frame(rtsp)
+        if source == "ezviz_cloud":
+            ezviz_serial = cam.get("ezviz_serial", "")
+            if not ezviz_serial:
+                return
+            image = await ezviz_client.capture_frame(ezviz_serial, int(cam.get("ezviz_channel", 1)))
+        else:
+            rtsp = cam.get("rtsp_url", "")
+            if not rtsp or not rtsp.startswith("rtsp://"):
+                return
+            image = await rtsp_client.capture_frame(rtsp)
+
         if image is None:
             return
 
