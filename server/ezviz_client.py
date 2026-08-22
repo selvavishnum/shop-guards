@@ -36,6 +36,34 @@ def _base() -> str:
     return (get_setting("ezviz_api_base") or DEFAULT_BASE).rstrip("/")
 
 
+async def _fetch_token_raw(app_key: str, app_secret: str, base: str) -> tuple[bool, dict]:
+    """Low-level token fetch that reports WHY it failed — wrong key, wrong
+    secret, wrong region, or unreachable — instead of just True/False.
+    Used both by get_access_token() and by test_credentials() for diagnostics."""
+    url = f"{base}/api/lapp/token/get"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(url, data={"appKey": app_key, "appSecret": app_secret})
+    except Exception as e:
+        return False, {"error": f"Could not reach {base} ({e.__class__.__name__}: {e})"}
+
+    try:
+        data = r.json()
+    except Exception:
+        snippet = r.text[:150].replace("\n", " ") if hasattr(r, "text") else ""
+        return False, {"error": f"{base} did not return JSON (HTTP {r.status_code}): {snippet!r} — likely the wrong API region"}
+
+    code = str(data.get("code", ""))
+    if code == "200":
+        inner = data.get("data") or {}
+        token = inner.get("accessToken")
+        if not token:
+            return False, {"error": f"Ezviz returned code 200 but no accessToken: {data}"}
+        return True, {"accessToken": token, "expireTime": inner.get("expireTime", 0)}
+
+    return False, {"error": f"Ezviz error {code}: {data.get('msg', 'unknown error')}", "code": code}
+
+
 async def get_access_token(force: bool = False) -> str | None:
     if not force:
         token  = get_setting("ezviz_access_token")
@@ -48,22 +76,13 @@ async def get_access_token(force: bool = False) -> str | None:
     if not app_key or not app_secret:
         return None
 
-    url = f"{_base()}/api/lapp/token/get"
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(url, data={"appKey": app_key, "appSecret": app_secret})
-            data = r.json()
-    except Exception:
+    ok, info = await _fetch_token_raw(app_key, app_secret, _base())
+    if not ok:
         return None
 
-    if str(data.get("code")) != "200":
-        return None
-
-    token     = data["data"]["accessToken"]
-    expire_ms = data["data"].get("expireTime", 0)
-    set_setting("ezviz_access_token", token)
-    set_setting("ezviz_token_expiry", str(int(expire_ms / 1000)))
-    return token
+    set_setting("ezviz_access_token", info["accessToken"])
+    set_setting("ezviz_token_expiry", str(int(info["expireTime"] / 1000)))
+    return info["accessToken"]
 
 
 async def _post(path: str, **params) -> dict | None:
@@ -96,9 +115,19 @@ async def _post(path: str, **params) -> dict | None:
 
 
 async def test_credentials() -> dict:
-    """Used by the Settings 'Test Connection' button — attempts a fresh token fetch."""
-    token = await get_access_token(force=True)
-    return {"ok": token is not None}
+    """Used by the Settings 'Test Connection' button — returns WHY it failed,
+    not just True/False, so a wrong key/secret/region can actually be told apart."""
+    app_key    = get_setting("ezviz_app_key")
+    app_secret = get_setting("ezviz_app_secret")
+    if not app_key or not app_secret:
+        return {"ok": False, "error": "App Key and App Secret are required."}
+
+    ok, info = await _fetch_token_raw(app_key, app_secret, _base())
+    if ok:
+        set_setting("ezviz_access_token", info["accessToken"])
+        set_setting("ezviz_token_expiry", str(int(info["expireTime"] / 1000)))
+        return {"ok": True}
+    return {"ok": False, "error": info.get("error", "unknown failure")}
 
 
 async def list_devices() -> list[dict]:

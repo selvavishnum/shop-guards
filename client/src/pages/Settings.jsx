@@ -16,6 +16,7 @@ export default function SettingsPage() {
   const [ezvizConfigured, setEzvizConfigured] = useState(false);
   const [ezvizTesting,    setEzvizTesting]    = useState(false);
   const [ezvizTestOk,     setEzvizTestOk]     = useState(null);
+  const [ezvizTestError,  setEzvizTestError]  = useState("");
 
   useEffect(() => {
     api.getSettings().then(s => {
@@ -29,7 +30,7 @@ export default function SettingsPage() {
   }, []);
 
   const handleEzvizTest = async () => {
-    setEzvizTesting(true); setEzvizTestOk(null);
+    setEzvizTesting(true); setEzvizTestOk(null); setEzvizTestError("");
     try {
       await api.saveSettings({
         ezviz_app_key: form.ezviz_app_key,
@@ -38,8 +39,12 @@ export default function SettingsPage() {
       });
       const r = await api.testEzviz();
       setEzvizTestOk(r.ok);
+      setEzvizTestError(r.ok ? "" : (r.error || "Unknown failure"));
       if (r.ok) setEzvizConfigured(true);
-    } catch { setEzvizTestOk(false); }
+    } catch (err) {
+      setEzvizTestOk(false);
+      setEzvizTestError(err?.response?.data?.error || "Request to the server failed.");
+    }
     finally { setEzvizTesting(false); }
   };
 
@@ -149,8 +154,12 @@ export default function SettingsPage() {
             {ezvizTesting ? "Testing…" : "Test Connection"}
           </button>
           {ezvizTestOk === true  && <span style={{fontSize:11,color:"var(--green)"}}>✓ Connected successfully</span>}
-          {ezvizTestOk === false && <span style={{fontSize:11,color:"#dc2626"}}>✗ Failed — check key/secret or try a different API region</span>}
         </div>
+        {ezvizTestOk === false && (
+          <div style={{fontSize:11,color:"#dc2626",marginTop:8,lineHeight:1.6}}>
+            ✗ {ezvizTestError}
+          </div>
+        )}
       </div>
 
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
