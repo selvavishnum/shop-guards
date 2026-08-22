@@ -18,6 +18,12 @@ services:
         sync: false
       - key: EMAIL_TO
         sync: false
+      - key: EZVIZ_APP_KEY
+        sync: false
+      - key: EZVIZ_APP_SECRET
+        sync: false
+      - key: EZVIZ_API_BASE
+        sync: false       # optional — leave unset to use the default region
       - key: DB_PATH
         value: shopguard.db
 
