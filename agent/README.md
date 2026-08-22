@@ -145,3 +145,46 @@ and their RTSP URLs.
 | `connect failed, retry` | Wrong RTSP URL / password, or camera not on this WiFi. Test the URL in [VLC](https://www.videolan.org) → Open Network Stream. |
 | Snapshots not updating on dashboard | Check the agent terminal for errors; confirm `cloud_url` is correct and reachable. |
 | High CPU | Increase `scan_interval`, use `yolov8n.pt`. |
+
+---
+
+## Bonus: Bill-Print Monitor
+
+A separate, lightweight script — **`print_monitor.py`** — watches your billing
+printer and alerts you the moment a bill fails to print. It does **not**
+integrate with your billing software at all (works with Tally, Marg, Busy, a
+custom POS, anything) — it watches the Windows print queue that software's
+"Print" button sends the bill to. If a print job errors, gets stuck, or the
+printer is offline/out of paper, you get an alert on the dashboard + email
+within seconds.
+
+**Setup (on the billing computer — usually Windows):**
+
+```bash
+cd agent
+pip install -r print_requirements.txt
+copy print_config.example.yaml print_config.yaml
+```
+
+Edit `print_config.yaml`:
+- `cloud_url` — same dashboard URL as the camera agent
+- `agent_key` — same Agent Key as the camera agent (Settings → On-Site Agent)
+- `printer_name` — the **exact** name from Windows Settings → Printers & Scanners
+
+Run it:
+```bash
+python print_monitor.py --config print_config.yaml
+```
+
+You'll see `Watching printer '...' — checking every 5s`. Print a test bill —
+nothing happens if it succeeds. Turn the printer off (or open its paper
+door) and print again — within a few seconds, a **"Bill Print Failed"**
+alert appears on the dashboard with the reason (`offline`, `paper_out`,
+`stuck_in_queue`, etc.) and an email if you've set one up in Settings.
+
+**Auto-start on Windows:** same pattern as the camera agent — create a
+`.bat` file with `python print_monitor.py --config print_config.yaml` and
+place a shortcut to it in `shell:startup`, or add it to Task Scheduler.
+
+This can run on the **same PC** as the camera agent, or a **different PC**
+(the billing computer) — just reuse the same Agent Key either way.

@@ -1,0 +1,6 @@
+# ShopGuard Bill-Print Monitor dependencies — Windows only.
+# (Separate from requirements.txt because pywin32 does not install on
+#  Linux/Mac, and this monitor only ever needs to run on the billing PC.)
+pywin32==308
+requests==2.32.3
+PyYAML==6.0.2

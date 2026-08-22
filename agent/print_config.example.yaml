@@ -1,0 +1,33 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  ShopGuard Bill-Print Monitor — configuration
+#
+#  Copy this file to  print_config.yaml  and fill in your values.
+#      copy print_config.example.yaml print_config.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Your dashboard URL (the Render site). NO trailing slash. Same value as the
+# camera agent's config.yaml.
+cloud_url: https://YOUR-APP.onrender.com
+
+# Same Agent Key as the camera agent — get it from:
+#   Dashboard → Settings → On-Site Agent → Agent Key
+# (or open  https://YOUR-APP.onrender.com/api/agent/status  in a browser)
+agent_key: CHANGE_ME
+
+# The EXACT printer name as it appears in Windows Settings -> Printers & Scanners
+# (or Control Panel -> Devices and Printers). Copy it exactly — spelling,
+# spacing and case all matter.
+printer_name: "EPSON LX-310"
+
+# How often (seconds) to check the print queue and printer status.
+poll_interval: 5
+
+# If a bill has been sitting in the queue this many seconds without printing,
+# treat it as stuck and alert (covers cases the printer doesn't report as an
+# explicit error, e.g. spooler paused, driver hung).
+stuck_after_seconds: 45
+
+# Once the printer itself is reported offline/out-of-paper/etc, don't alert
+# again for the SAME ongoing problem until this many seconds have passed —
+# otherwise you'd get one alert every poll_interval while it stays broken.
+offline_alert_cooldown: 600

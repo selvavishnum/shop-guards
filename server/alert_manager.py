@@ -25,6 +25,7 @@ ALERT_LABELS = {
     "vehicle_detected":  "Vehicle Detected",
     "phone_use":         "Phone Use Detected",
     "bag_suspicious":    "Suspicious Bag",
+    "print_failed":      "Bill Print Failed",
 }
 
 
@@ -139,6 +140,26 @@ async def process(serial: str, name: str, detection: dict, cam: dict):
         threading.Thread(target=_send_email, args=(event, b64), daemon=True).start()
 
 
+async def raise_custom(serial: str, name: str, alert_type: str, monitor_type: str, extra: dict | None = None):
+    """For alerts not tied to a camera-frame detection — e.g. a billing
+    printer that failed to print a bill. Saves + broadcasts + emails exactly
+    like a detection alert, just without person/vehicle counts or a snapshot."""
+    save_alert(serial, name, alert_type, monitor_type, 0, 1.0, "", 0)
+    event = {
+        "type":          "alert",
+        "camera_serial": serial,
+        "camera_name":   name,
+        "alert_type":    alert_type,
+        "monitor_type":  monitor_type,
+        "person_count":  0,
+        "vehicle_count": 0,
+        "time":          time.strftime("%Y-%m-%d %H:%M:%S"),
+        **(extra or {}),
+    }
+    await broadcast(event)
+    threading.Thread(target=_send_email, args=(event, ""), daemon=True).start()
+
+
 def _send_email(event: dict, b64: str):
     efrom = get_setting("email_from")
     epw   = get_setting("email_password")
@@ -147,13 +168,20 @@ def _send_email(event: dict, b64: str):
         return
     label   = ALERT_LABELS.get(event["alert_type"], event["alert_type"])
     subject = f"[ShopGuard] {label} — {event['camera_name']}"
-    body    = (
-        f"Alert:    {label}\n"
-        f"Camera:   {event['camera_name']}\n"
-        f"Persons:  {event['person_count']}\n"
-        f"Vehicles: {event.get('vehicle_count', 0)}\n"
-        f"Time:     {event['time']}\n"
-    )
+    lines   = [
+        f"Alert:    {label}",
+        f"Camera:   {event['camera_name']}",
+    ]
+    if event["alert_type"] == "print_failed":
+        if event.get("print_document"):
+            lines.append(f"Bill:     {event['print_document']}")
+        if event.get("print_reason"):
+            lines.append(f"Reason:   {event['print_reason']}")
+    else:
+        lines.append(f"Persons:  {event['person_count']}")
+        lines.append(f"Vehicles: {event.get('vehicle_count', 0)}")
+    lines.append(f"Time:     {event['time']}")
+    body = "\n".join(lines) + "\n"
     msg = MIMEMultipart()
     msg["From"], msg["To"], msg["Subject"] = efrom, eto, subject
     msg.attach(MIMEText(body))

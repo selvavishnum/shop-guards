@@ -361,6 +361,30 @@ async def attendance_summary():
     return {"summary": database.get_attendance_today_summary()}
 
 
+# ── Bill Print Monitor ────────────────────────────────────────────────────────
+# A small script (agent/print_monitor.py) runs on the billing PC and watches
+# the Windows print spooler for the bill printer — no billing-software
+# integration needed, works with Tally/Marg/Busy/anything that just "prints".
+# If a bill is sent to print and it fails, gets stuck, or the printer is
+# offline/out of paper, it posts here and you get an alert immediately.
+
+class PrintAlertBody(BaseModel):
+    printer_name: str
+    document: str = ""
+    reason: str
+
+
+@app.post("/api/print/alert")
+async def print_alert(body: PrintAlertBody, x_agent_key: str = Header(default="")):
+    if not _agent_authed(x_agent_key):
+        return JSONResponse({"error": "invalid agent key"}, status_code=401)
+    await alert_manager.raise_custom(
+        body.printer_name, f"Printer: {body.printer_name}", "print_failed", "printer",
+        {"print_document": body.document, "print_reason": body.reason},
+    )
+    return {"ok": True}
+
+
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 
 @app.websocket("/ws/alerts")
