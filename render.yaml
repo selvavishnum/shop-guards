@@ -5,13 +5,20 @@ services:
     runtime: python
     rootDir: server
     # Render's native Python runtime builds as a non-root user, so apt-get
-    # (which needs root) fails every build — this is why every deploy has
-    # been failing with "Exited with status 100 while building your code".
-    # opencv-python-headless bundles its own FFmpeg support, so no system
-    # ffmpeg/libSM/libXext packages are needed at all.
+    # (which needs root) fails every build — this is why every deploy failed
+    # with "Exited with status 100 while building your code".
+    #
+    # ultralytics unconditionally depends on `opencv-python` (the GUI build,
+    # which dynamically links libGL.so.1/libSM.so.6/libXext.so.6/libXrender.so.1)
+    # even though we only ask for `opencv-python-headless` ourselves — pip has
+    # no way to know the two distributions overlap, so it installs both, and
+    # whichever's files land last in site-packages/cv2 wins. The final
+    # `--force-reinstall --no-deps` guarantees the headless build's files are
+    # what's actually on disk, so cv2 never needs those missing system libs.
     buildCommand: >-
       pip install --upgrade pip &&
-      pip install -r requirements.txt
+      pip install -r requirements.txt &&
+      pip install --force-reinstall --no-deps opencv-python-headless==4.10.0.84
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
